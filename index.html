@@ -1,0 +1,3055 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<script src="config.js"></script>
+<title>Стопка</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Manrope:wght@500;700&display=swap">
+<style>
+  /* Layout: one-screen game. A painted dusk backdrop (stars, moon, two skylines) lives on the canvas under the blocks. HUD on top; start and game-over text sits low and left, above a difficulty switch and a three-button bar. Leaders, skins and quests open as a sheet. */
+  /* Single committed look (dusk sky whose hue drifts as the tower grows), so no light variant by choice. */
+  @property --h { syntax: '<number>'; inherits: true; initial-value: 262; }
+  :root {
+    --ink: #140f2e;
+    --dusk: #2b2166;
+    --rose: #ff7a8a;
+    --peach: #ffc9a8;
+    --text: #fff4ee;
+    --muted: rgba(255, 244, 238, 0.74);
+    --line: rgba(255, 244, 238, 0.16);
+    --glass: rgba(255, 244, 238, 0.12);
+    --font-display: 'Unbounded', 'Arial Black', system-ui, sans-serif;
+    --font-body: 'Manrope', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --h: 262;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    padding-block: 0;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    background-color: var(--ink);
+    background-image: linear-gradient(180deg, hsl(var(--h) 46% 11%) 0%, hsl(calc(var(--h) + 24) 50% 22%) 55%, hsl(calc(var(--h) + 48) 56% 36%) 100%);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 16px;
+    overflow: hidden;
+    overscroll-behavior: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .stage { position: relative; height: 100%; max-width: 520px; margin: 0 auto; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+
+  .gem { display: inline-block; width: 9px; height: 9px; background: linear-gradient(135deg, var(--peach), var(--rose)); transform: rotate(45deg); border-radius: 1px; flex: none; }
+
+  .hud { position: absolute; inset: 12px 0 auto 0; display: flex; align-items: center; justify-content: space-between; gap: 12px; pointer-events: none; }
+  .hud > * { pointer-events: auto; }
+  .hud-right { display: flex; align-items: center; gap: 14px; }
+  .chip {
+    font: 700 12px/1 var(--font-body);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text);
+    background: linear-gradient(180deg, rgba(255, 244, 238, 0.2), rgba(255, 244, 238, 0.09));
+    border: 1px solid rgba(255, 244, 238, 0.24);
+    border-radius: 8px;
+    padding: 12px;
+    min-height: 44px;
+    cursor: pointer;
+    box-shadow: 0 2px 0 rgba(20, 15, 46, 0.45);
+  }
+  .chip:active { transform: translateY(2px); box-shadow: none; }
+  .chip[aria-pressed="false"] { opacity: 0.6; text-decoration: line-through; }
+  .best, .coins { font: 700 12px/1 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+  .best { color: var(--muted); }
+  .coins { display: inline-flex; align-items: center; gap: 7px; color: var(--text); }
+  .score {
+    position: absolute; left: 0; right: 0; top: 64px;
+    text-align: center;
+    font: 700 64px/1 var(--font-display);
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    text-shadow: 0 2px 0 rgba(20, 15, 46, 0.35);
+  }
+  .tempo, .hint, .wave, .toast {
+    position: absolute; left: 0; right: 0; text-align: center; pointer-events: none;
+    font-weight: 700; color: var(--muted);
+  }
+  .tempo { top: 132px; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; font-variant-numeric: tabular-nums; }
+  .hint { top: 154px; font-size: 14px; }
+  .wave { top: 154px; font-size: 13px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--peach); }
+  .toast { top: 180px; font-size: 14px; color: var(--text); text-shadow: 0 1px 0 rgba(20, 15, 46, 0.6); padding-inline: 8px; }
+
+  .overlay {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-start; gap: 14px;
+    padding-block: 0 148px;
+    overflow: hidden;
+    background: linear-gradient(180deg, rgba(20, 15, 46, 0) 18%, rgba(20, 15, 46, 0.5) 58%, rgba(20, 15, 46, 0.86) 100%);
+  }
+  .kicker { display: inline-flex; align-items: center; gap: 6px; font: 700 12px/1 var(--font-body); letter-spacing: 0.14em; text-transform: uppercase; color: var(--peach); }
+  .kicker i { display: block; height: 8px; border-radius: 1px; }
+  .kicker i:nth-child(1) { width: 8px; background: var(--rose); }
+  .kicker i:nth-child(2) { width: 14px; background: var(--peach); }
+  .kicker i:nth-child(3) { width: 8px; background: var(--text); margin-right: 4px; }
+  .overlay h1 {
+    margin: 0; max-width: 100%;
+    font: 700 clamp(38px, 12.5vw, 62px)/1 var(--font-display);
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+    text-shadow: 0 3px 0 rgba(20, 15, 46, 0.5), 0 0 34px hsl(var(--h) 90% 72% / 0.4);
+  }
+  .overlay p { margin: 0; max-width: 34ch; color: var(--muted); font-size: 15px; line-height: 1.45; text-wrap: pretty; }
+  .overlay p.dnote { font-size: 13px; color: var(--peach); }
+  .stats { display: flex; gap: 24px; }
+  .stat b { display: block; font: 700 32px/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+
+  .go {
+    display: inline-flex; align-items: center; gap: 10px;
+    font: 700 18px/1 var(--font-display);
+    letter-spacing: 0.01em;
+    color: #3a0f26;
+    background: linear-gradient(180deg, #ffe6d4 0%, var(--peach) 38%, var(--rose) 100%);
+    border: 0;
+    border-radius: 12px;
+    padding: 0 30px;
+    min-height: 62px;
+    cursor: pointer;
+    box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.7), inset 0 -4px 0 rgba(150, 35, 70, 0.28), 0 6px 0 #7a2145, 0 14px 26px rgba(10, 6, 30, 0.5);
+    transition: transform 0.08s, box-shadow 0.08s;
+  }
+  .go:active { transform: translateY(5px); box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.7), inset 0 -4px 0 rgba(150, 35, 70, 0.28), 0 1px 0 #7a2145, 0 4px 10px rgba(10, 6, 30, 0.5); }
+  .go svg, .tab svg { flex: none; }
+
+  .seg {
+    position: absolute; left: 0; right: 0; bottom: 84px;
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
+    padding: 4px; border-radius: 12px;
+    background: rgba(20, 15, 46, 0.6);
+    border: 1px solid var(--line);
+  }
+  .seg button {
+    font: 700 13px/1 var(--font-body);
+    color: var(--muted);
+    background: transparent;
+    border: 0; border-radius: 8px;
+    min-height: 42px; padding: 0 6px;
+    cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] {
+    color: #3a0f26;
+    background: linear-gradient(180deg, var(--peach), var(--rose));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6), 0 2px 0 rgba(122, 33, 69, 0.8);
+  }
+
+  .nav { position: absolute; left: 0; right: 0; bottom: 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .tab {
+    position: relative;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    font: 700 11px/1 var(--font-body);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+    background: linear-gradient(180deg, rgba(255, 244, 238, 0.2), rgba(255, 244, 238, 0.07));
+    border: 1px solid rgba(255, 244, 238, 0.24);
+    border-radius: 12px;
+    min-height: 60px;
+    padding: 0 6px;
+    cursor: pointer;
+    box-shadow: 0 4px 0 rgba(20, 15, 46, 0.55);
+    transition: transform 0.08s, box-shadow 0.08s;
+  }
+  .tab:active { transform: translateY(3px); box-shadow: 0 1px 0 rgba(20, 15, 46, 0.55); }
+  .badge {
+    position: absolute; top: 6px; right: 8px;
+    min-width: 20px; height: 20px; padding: 0 5px;
+    display: inline-flex; align-items: center; justify-content: center;
+    font: 700 11px/1 var(--font-body);
+    letter-spacing: 0;
+    color: var(--ink); background: var(--peach); border-radius: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .sheet {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    background: rgba(20, 15, 46, 0.96);
+    border-radius: 8px;
+  }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .sheet-head h2 { margin: 0; font: 700 20px/1.1 var(--font-display); }
+  .sheet-meta { display: flex; align-items: center; gap: 12px; }
+  .sheet-body { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 16px 24px; -webkit-overflow-scrolling: touch; }
+  .note { margin: 16px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; text-wrap: pretty; }
+
+  .lb { list-style: none; margin: 0; padding: 0; }
+  .lb li { display: grid; grid-template-columns: 32px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-height: 52px; border-bottom: 1px solid var(--line); }
+  .lb li.me { background: var(--glass); margin-inline: -16px; padding-inline: 16px; }
+  .lb .rank { font: 700 14px/1 var(--font-display); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .lb li:nth-child(-n+3) .rank { color: var(--peach); }
+  .lb .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+  .lb .who em { font-style: normal; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--peach); margin-left: 8px; }
+  .lb .pts { font: 700 16px/1 var(--font-display); font-variant-numeric: tabular-nums; }
+
+  .skins { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 8px; }
+  .skin { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+  .preview { height: 108px; padding: 10px; display: flex; flex-direction: column-reverse; gap: 1px; background: rgba(0, 0, 0, 0.28); border-radius: 6px; border: 2px solid transparent; }
+  .skin.on .preview { border-color: var(--peach); }
+  .preview i { display: block; height: 14px; }
+  .skin-name { font: 700 14px/1.2 var(--font-display); }
+  .mini {
+    font: 700 13px/1 var(--font-body);
+    color: #3a0f26;
+    background: linear-gradient(180deg, #ffe6d4 0%, var(--peach) 40%, var(--rose) 100%);
+    border: 0; border-radius: 8px;
+    min-height: 44px; padding: 0 14px;
+    cursor: pointer;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 3px 0 #7a2145;
+  }
+  .mini:active { transform: translateY(2px); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), 0 1px 0 #7a2145; }
+  .mini:disabled { background: var(--glass); color: var(--muted); cursor: default; box-shadow: none; transform: none; }
+  .skin small { color: var(--muted); font-size: 12px; }
+
+  .q { padding: 16px 0; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 10px; }
+  .q-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  .q-text { font-weight: 700; line-height: 1.35; min-width: 0; text-wrap: pretty; }
+  .q-rew { display: inline-flex; align-items: center; gap: 7px; font: 700 13px/1 var(--font-body); font-variant-numeric: tabular-nums; flex: none; padding-top: 3px; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--rose), var(--peach)); border-radius: 3px; }
+  .q-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; }
+  .q-num { color: var(--muted); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .go:focus-visible, .chip:focus-visible, .tab:focus-visible, .mini:focus-visible, .seg button:focus-visible { outline: 3px solid var(--peach); outline-offset: 3px; }
+
+  /* ---- v4 additions: themed sky, menu in flow, modes, word duel ---- */
+  :root { --sky1: hsl(262 46% 11%); --sky2: hsl(286 50% 22%); --sky3: hsl(310 56% 36%); }
+  body { background-image: linear-gradient(180deg, var(--sky1) 0%, var(--sky2) 55%, var(--sky3) 100%); }
+  .overlay { padding-block: 0 12px; gap: 12px; }
+  .seg, .nav { position: static; width: 100%; }
+  .nav { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; }
+  .tab { font-size: 10px; letter-spacing: 0.03em; min-height: 56px; gap: 5px; }
+  .badge { top: 4px; right: 4px; }
+  .hud-left { display: flex; gap: 8px; }
+  .modes { display: flex; gap: 8px; width: 100%; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+  .modes::-webkit-scrollbar { display: none; }
+  .mchip {
+    flex: none;
+    font: 700 13px/1 var(--font-body);
+    color: var(--text);
+    background: var(--glass);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    min-height: 40px; padding: 0 14px;
+    cursor: pointer;
+  }
+  .mchip[aria-pressed="true"] { color: #3a0f26; border-color: transparent; background: linear-gradient(180deg, var(--peach), var(--rose)); }
+  .mchip:focus-visible { outline: 3px solid var(--peach); outline-offset: 2px; }
+  .timer { position: absolute; left: 0; right: 0; top: 52px; text-align: center; font: 700 15px/1 var(--font-display); font-variant-numeric: tabular-nums; color: var(--peach); pointer-events: none; }
+  .fxbar { position: absolute; left: 0; right: 0; top: 204px; text-align: center; font: 700 12px/1.3 var(--font-body); letter-spacing: 0.06em; text-transform: uppercase; color: var(--peach); pointer-events: none; }
+  .go.small { min-height: 52px; font-size: 15px; padding: 0 22px; }
+  .go.ghost { color: var(--text); background: var(--glass); box-shadow: inset 0 0 0 1px var(--line), 0 4px 0 rgba(20, 15, 46, 0.5); }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .overlay.center { justify-content: center; background: rgba(20, 15, 46, 0.7); }
+  @media (max-height: 720px) { .overlay p.desc { display: none; } }
+
+  .sub { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px; padding: 4px; margin: 12px 0 4px; border-radius: 12px; background: rgba(255, 244, 238, 0.07); border: 1px solid var(--line); }
+  .sub button { font: 700 13px/1 var(--font-body); color: var(--muted); background: transparent; border: 0; border-radius: 8px; min-height: 40px; padding: 0 6px; cursor: pointer; }
+  .sub button[aria-pressed="true"] { color: #3a0f26; background: linear-gradient(180deg, var(--peach), var(--rose)); }
+  .sub button:focus-visible { outline: 3px solid var(--peach); outline-offset: 2px; }
+  .sec-h { margin: 22px 0 6px; font: 700 12px/1 var(--font-body); letter-spacing: 0.12em; text-transform: uppercase; color: var(--peach); }
+  .field {
+    flex: 1; min-width: 0; min-height: 48px;
+    font: 700 20px/1 var(--font-display);
+    letter-spacing: 0.2em; text-align: center;
+    color: var(--text); background: rgba(255, 244, 238, 0.08);
+    border: 1px solid var(--line); border-radius: 10px;
+    -webkit-user-select: text; user-select: text;
+  }
+  .field:focus-visible { outline: 3px solid var(--peach); outline-offset: 2px; }
+  .code { font: 700 40px/1 var(--font-display); letter-spacing: 0.18em; margin: 14px 0 4px; font-variant-numeric: tabular-nums; }
+
+  .statgrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin-top: 10px; }
+  .st { padding: 12px 10px; border-radius: 10px; background: rgba(255, 244, 238, 0.07); min-width: 0; }
+  .st b { display: block; font: 700 20px/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
+  .st span { display: block; margin-top: 5px; font-size: 11px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted); }
+  .ach { display: flex; gap: 12px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); }
+  .ach .ic { flex: none; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: rgba(255, 244, 238, 0.08); color: var(--muted); }
+  .ach.got .ic { background: linear-gradient(180deg, var(--peach), var(--rose)); color: #3a0f26; }
+  .ach .tx { min-width: 0; flex: 1; }
+  .ach b { display: block; font-size: 15px; }
+  .ach small { display: block; margin-top: 3px; color: var(--muted); font-size: 13px; line-height: 1.35; }
+  .ach .rw { font: 700 12px/1 var(--font-body); color: var(--peach); font-variant-numeric: tabular-nums; }
+  .ach:not(.got) { opacity: 0.72; }
+
+  .themes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 8px; }
+  .swatch { height: 70px; border-radius: 8px; border: 2px solid transparent; }
+  .skin.on .swatch { border-color: var(--peach); }
+
+  .wordbox { position: absolute; left: 0; right: 0; top: 76px; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+  .wordbox .wr { font: 700 12px/1 var(--font-body); letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+  .wordbox .ww { font: 700 clamp(30px, 10vw, 46px)/1.05 var(--font-display); letter-spacing: 0.03em; text-shadow: 0 3px 0 rgba(20, 15, 46, 0.5); min-height: 1.1em; }
+  .ww .ok { color: var(--peach); }
+  .ww .bad { color: #ff5d73; }
+  .wordbox input {
+    width: min(100%, 320px); min-height: 52px;
+    font: 700 22px/1 var(--font-display); text-align: center; text-transform: lowercase;
+    color: var(--text); background: rgba(20, 15, 46, 0.7);
+    border: 2px solid var(--line); border-radius: 12px;
+    -webkit-user-select: text; user-select: text;
+  }
+  .wordbox input:focus-visible { outline: 3px solid var(--peach); outline-offset: 2px; }
+  .wordbox input.bad { border-color: #ff5d73; }
+  .wordbox .wm { min-height: 18px; font-weight: 700; font-size: 14px; color: var(--peach); }
+
+  [hidden] { display: none !important; }
+
+  /* full-bleed on phones: the game fills the screen edge to edge */
+  body { padding-left: 0; padding-right: 0; }
+  .stage { max-width: 520px; }
+  @media (max-width: 560px) { .stage { max-width: none; } }
+  .hud { inset: 12px 16px auto 16px; }
+  .overlay { padding-inline: 16px; }
+
+  /* ---- soft palette, landscape ---- */
+  :root { --text: #eadfd8; --sky1: hsl(262 34% 12%); --sky2: hsl(280 30% 21%); --sky3: hsl(305 30% 33%); }
+  .stage::after { content: ''; position: absolute; inset: 0; pointer-events: none; background: rgba(44, 34, 64, 0.1); z-index: 1; }
+  .go { filter: saturate(0.85); }
+  #shop .mchip { min-height: 36px; font-size: 12px; padding: 0 12px; }
+  @media (orientation: landscape) and (max-height: 520px) {
+    .stage { max-width: 640px; }
+    .overlay h1, .overlay .kicker { display: none; }
+    .overlay p.desc { display: none; }
+    .overlay { gap: 6px; overflow-y: auto; }
+    .tab { min-height: 44px; }
+    .toast { top: 70px; }
+    .fxbar { top: 96px; }
+    .timer { top: 40px; }
+  }
+
+  /* ---- second game ---- */
+  .gsw { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; width: 100%; border-radius: 14px; background: rgba(255, 244, 238, 0.08); border: 1px solid var(--line); margin-bottom: auto; margin-top: 64px; }
+  .gsw button { font: 700 14px/1 var(--font-body); color: var(--muted); background: transparent; border: 0; border-radius: 10px; min-height: 42px; cursor: pointer; }
+  .gsw button[aria-pressed="true"] { color: #3a0f26; background: linear-gradient(180deg, var(--peach), var(--rose)); }
+  .g2 { position: absolute; inset: 0; z-index: 5; background: linear-gradient(180deg, hsl(236 36% 11%), hsl(262 30% 20%) 60%, hsl(290 28% 28%)); touch-action: none; }
+  .g2 canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  .g2hud { position: absolute; left: 16px; right: 16px; top: 16px; display: flex; justify-content: space-between; align-items: center; font: 800 34px/1 var(--font-display); color: var(--text); pointer-events: none; }
+  .g2hud #g2lives { font-size: 22px; color: #e88a9a; letter-spacing: 3px; }
+  .g2menu { z-index: 6; padding-bottom: 28px; }
+  .g2menu[hidden] { display: none !important; }
+
+  /* ---- smooth animations ---- */
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes sheetIn { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+  @keyframes scorePop { 0% { transform: scale(1); } 40% { transform: scale(1.22); } 100% { transform: scale(1); } }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(-8px) scale(0.98); } to { opacity: 1; transform: none; } }
+  .overlay:not([hidden]) > * { animation: fadeUp 0.42s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .overlay:not([hidden]) > *:nth-child(2) { animation-delay: 0.04s; }
+  .overlay:not([hidden]) > *:nth-child(3) { animation-delay: 0.08s; }
+  .overlay:not([hidden]) > *:nth-child(4) { animation-delay: 0.12s; }
+  .overlay:not([hidden]) > *:nth-child(5) { animation-delay: 0.16s; }
+  .overlay:not([hidden]) > *:nth-child(n+6) { animation-delay: 0.2s; }
+  .g2:not([hidden]) { animation: fadeIn 0.3s ease backwards; }
+  .sheet:not([hidden]) { animation: sheetIn 0.32s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+  .toast:not([hidden]) { animation: toastIn 0.25s ease both; }
+  .score.pop { animation: scorePop 0.22s ease; }
+  .go, .chip, .mchip, .tab, .mini, .sub button, .seg button, .gsw button { transition: transform 0.15s ease, background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease; }
+  .go:active, .chip:active, .mchip:active, .tab:active, .mini:active { transform: scale(0.96); }
+  .skin, .quest, .row-item { transition: transform 0.2s ease, background-color 0.2s ease; }
+  @media (prefers-reduced-motion: reduce) {
+    .overlay:not([hidden]) > *, .g2:not([hidden]), .sheet:not([hidden]), .toast:not([hidden]), .score.pop { animation: none; }
+    .go, .chip, .mchip, .tab, .mini { transition: none; }
+  }
+
+  /* ---- smooth motion ---- */
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes sheetIn { from { opacity: 0; transform: translateY(26px); } to { opacity: 1; transform: none; } }
+  @keyframes bump { 0% { transform: scale(1); } 40% { transform: scale(1.18); } 100% { transform: scale(1); } }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(-8px) scale(0.97); } to { opacity: 1; transform: none; } }
+  .overlay:not([hidden]) > * { animation: fadeUp 0.42s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+  .overlay:not([hidden]) > *:nth-child(2) { animation-delay: 0.04s; }
+  .overlay:not([hidden]) > *:nth-child(3) { animation-delay: 0.08s; }
+  .overlay:not([hidden]) > *:nth-child(4) { animation-delay: 0.12s; }
+  .overlay:not([hidden]) > *:nth-child(5) { animation-delay: 0.16s; }
+  .overlay:not([hidden]) > *:nth-child(n+6) { animation-delay: 0.2s; }
+  .overlay:not([hidden]) { animation: fadeIn 0.3s ease backwards; }
+  .sheet:not([hidden]) { animation: sheetIn 0.38s cubic-bezier(0.22, 1, 0.36, 1) backwards; }
+  .g2:not([hidden]) { animation: fadeIn 0.35s ease backwards; }
+  .toast:not([hidden]) { animation: toastIn 0.26s ease backwards; }
+  .score.bump { animation: bump 0.28s ease-out; }
+  button, .tab, .mchip, .chip, .go, .mini, .sub button, .seg button, .gsw button { transition: transform 0.16s ease, background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease; }
+  button:active:not(:disabled), .tab:active, .go:active { transform: scale(0.96); }
+  .skin, .quest, .row-item { transition: transform 0.2s ease, opacity 0.2s ease; }
+  @media (prefers-reduced-motion: reduce) {
+    .overlay:not([hidden]), .overlay:not([hidden]) > *, .sheet:not([hidden]), .g2:not([hidden]), .toast:not([hidden]), .score.bump { animation: none !important; }
+  }
+  :root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+</style>
+</head>
+<body>
+
+<div class="stage" id="stage">
+  <canvas id="cv" aria-label="Игровое поле"></canvas>
+
+  <div class="hud">
+    <div class="hud-left">
+      <button class="chip" id="soundBtn" type="button" aria-pressed="true">Звук</button>
+      <button class="chip" id="pauseBtn" type="button" aria-pressed="false">Пауза</button>
+      <button class="chip" id="musicBtn" type="button" aria-pressed="true">Музыка</button>
+    </div>
+    <div class="hud-right">
+      <span class="best" id="bestLabel">Рекорд 0</span>
+      <span class="coins"><i class="gem"></i><b id="coinN">0</b></span>
+    </div>
+  </div>
+  <div class="timer" id="timer" hidden></div>
+  <div class="score" id="score" aria-live="polite">0</div>
+  <div class="tempo" id="tempo"></div>
+  <div class="hint" id="hint" hidden>Коснись экрана, чтобы опустить блок</div>
+  <div class="wave" id="wave" hidden></div>
+  <div class="fxbar" id="fxbar"></div>
+  <div class="toast" id="toast" hidden></div>
+
+  <div class="wordbox" id="wordBox" hidden>
+    <div class="wr" id="wordRound"></div>
+    <div class="ww" id="wordText"></div>
+    <input id="wordInput" type="text" inputmode="text" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="done" maxlength="20" aria-label="Введи слово">
+    <div class="wm" id="wordMsg"></div>
+  </div>
+
+  <div class="overlay" id="startOverlay">
+    <div class="gsw" role="group" aria-label="Игра"><button type="button" data-g="1" aria-pressed="true">Стопка</button><button type="button" data-g="2" aria-pressed="false">Звездопад</button></div>
+    <span class="kicker"><i></i><i></i><i></i>Башня из блоков</span>
+    <h1>Стопка</h1>
+    <p class="desc">Опускай блок касанием. Идеальное попадание даёт двойные очки. Ловь подарки, побеждай боссов и вызывай друзей на дуэль.</p>
+    <div class="modes" id="modes" role="group" aria-label="Режим">
+      <button class="mchip" type="button" data-m="classic" aria-pressed="true">Классика</button>
+      <button class="mchip" type="button" data-m="timed" aria-pressed="false">На время</button>
+      <button class="mchip" type="button" data-m="nomist" aria-pressed="false">Без ошибок</button>
+      <button class="mchip" type="button" data-m="endless" aria-pressed="false">Бесконечный</button>
+      <button class="mchip" type="button" data-m="night" aria-pressed="false">Ночь</button>
+      <button class="mchip" type="button" data-m="daily" aria-pressed="false">Вызов дня</button>
+    </div>
+    <div class="seg" id="diff" role="group" aria-label="Сложность">
+      <button type="button" data-d="easy" aria-pressed="false">Лёгкая</button>
+      <button type="button" data-d="normal" aria-pressed="true">Обычная</button>
+      <button type="button" data-d="hard" aria-pressed="false">Сложная</button>
+    </div>
+    <p class="dnote" id="diffNote"></p>
+    <div class="modes" id="shop" role="group" aria-label="Магазин подарков"></div>
+    <button class="go" id="startBtn" type="button">
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg><span id="startLbl">Играть</span>
+    </button>
+    <nav class="nav" id="nav" aria-label="Меню">
+      <button class="tab" id="tabLb" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20v-7h5v7M9.5 20V5h5v15M15 20v-9h5v9"/></svg>Лидеры
+      </button>
+      <button class="tab" id="tabSkins" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 4h12l4 6-10 11L2 10zM2 10h20M9 4l3 6 3-6"/></svg>Скины
+      </button>
+      <button class="tab" id="tabQuests" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6l2 2 3-3M4 14l2 2 3-3M13 7h7M13 15h7"/></svg>Задания<span class="badge" id="qBadge" hidden>0</span>
+      </button>
+      <button class="tab" id="tabAch" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4h8v6a4 4 0 01-8 0zM8 6H4v1a3 3 0 003 3M16 6h4v1a3 3 0 01-3 3M12 14v4M8 20h8"/></svg>Успехи
+      </button>
+      <button class="tab" id="tabDuel" type="button">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 19L19 5M14 5h5v5M5 5l14 14"/></svg>Дуэль
+      </button>
+    </nav>
+  </div>
+
+  <div class="g2" id="g2" hidden>
+    <canvas id="cv2" aria-label="Звездопад"></canvas>
+    <div class="g2hud"><span id="g2score">0</span><span id="g2lives"></span></div>
+    <div class="overlay g2menu" id="g2menu">
+      <div class="gsw" role="group" aria-label="Игра"><button type="button" data-g="1" aria-pressed="false">Стопка</button><button type="button" data-g="2" aria-pressed="true">Звездопад</button></div>
+      <span class="kicker"><i></i><i></i><i></i>Лови звёзды</span>
+      <h1 id="g2title">Звездопад</h1>
+      <p class="desc" id="g2desc">Води пальцем и лови звёзды в чашу. Бомбы нельзя ловить, а упавшая звезда отнимает жизнь. Сердечко добавляет жизнь, золотая звезда даёт +5.</p>
+      <p class="dnote" id="g2best"></p>
+      <button class="go" id="g2go" type="button"><span id="g2goLbl">Играть</span></button>
+      <p class="dnote">Свайп влево или вправо переключает игру.</p>
+    </div>
+  </div>
+
+  <div class="overlay center" id="contOverlay" hidden>
+    <h1>Башня качнулась</h1>
+    <p id="contText">Вернуться на последний этаж?</p>
+    <div class="row">
+      <button class="go small" id="contBtn" type="button">Продолжить</button>
+      <button class="go small ghost" id="finishBtn" type="button">Закончить</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="overOverlay" hidden>
+    <h1 id="overTitle">Башня упала</h1>
+    <div class="stats">
+      <div class="stat"><b id="finalScore">0</b><span id="lblA">Очки</span></div>
+      <div class="stat"><b id="finalBest">0</b><span id="lblB">Рекорд</span></div>
+      <div class="stat"><b id="finalCoins">0</b><span>Монет</span></div>
+    </div>
+    <p id="overNote" class="dnote"></p>
+    <div class="row">
+      <button class="go" id="againBtn" type="button">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4l13 8-13 8z" fill="currentColor"/></svg>Ещё раз
+      </button>
+      <button class="go ghost" id="menuBtn" type="button">В меню</button>
+      <button class="go ghost" id="shareBtn" type="button">Поделиться</button>
+    </div>
+  </div>
+
+  <section class="sheet" id="sheet" hidden aria-label="Раздел">
+    <div class="sheet-head">
+      <h2 id="sheetTitle">Лидеры</h2>
+      <div class="sheet-meta">
+        <span class="coins"><i class="gem"></i><b id="sheetCoins">0</b></span>
+        <button class="chip" id="closeBtn" type="button">Закрыть</button>
+      </div>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+  </section>
+
+</div>
+
+<script>
+(function () {
+'use strict';
+
+  /* ================= refs and state ================= */
+  function $(id) { return document.getElementById(id); }
+  var cv = $('cv'), ctx = cv.getContext('2d'), stage = $('stage');
+  var scoreEl = $('score'), bestEl = $('bestLabel'), tempoEl = $('tempo'), hintEl = $('hint'), waveEl = $('wave');
+  var toastEl = $('toast'), timerEl = $('timer'), fxEl = $('fxbar');
+  var startOv = $('startOverlay'), overOv = $('overOverlay'), contOv = $('contOverlay');
+  var soundBtn = $('soundBtn'), musicBtn = $('musicBtn'), diffEl = $('diff'), modesEl = $('modes'), diffNote = $('diffNote');
+  var sheet = $('sheet'), sheetBody = $('sheetBody'), sheetTitle = $('sheetTitle');
+  var wordBox = $('wordBox'), wordInput = $('wordInput'), wordText = $('wordText'), wordRound = $('wordRound'), wordMsg = $('wordMsg');
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  var W = 0, H = 0, dpr = 1, baseW = 0, bh = 30;
+  var state = 'ready';            // ready | play | over | word | wait
+  var mode = 'classic', duel = null;
+  var blocks = [], points = 0, combo = 0, camY = 0, mx = 0, dir = 1, mw = 0;
+  var debris = [], fx = [], pops = [], rocks = [], birds = [];
+  var wave = null, nextMs = 20, lastKind = '', spawnT = 0, kick = 0, orb = null, timeLeft = 0;
+  var effects = { shield: 0, slow: 0, magnet: 0 }, lives = 0;
+  var SHOP = { shield: ['Щит', 15], slow: ['Замедл.', 10], magnet: ['Магнит', 20] };
+  var gctx = { maxCombo: 0 }, lastG = null, contUsed = false, contPending = false;
+  var lastT = 0, bt = 0, muted = false, ac = null, toastTimer = 0, toastQ = [], toastBusy = false;
+  var bgH = 262, skyKey = '';
+  var stars = [], far = [], near = [], flakes = [];
+  var rngf = Math.random;
+  function rnd() { return rngf(); }
+
+  /* ================= small helpers ================= */
+  function pad(n) { return n < 10 ? '0' + n : '' + n; }
+  function dayKey() { var d = new Date(); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function weekKey() { var d = new Date(); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()); }
+  function seedOf(s) { var h = 2166136261; for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+  function mulberry(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; var t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  function pl(n, a, b, c) { var m = n % 10, h = n % 100; if (m === 1 && h !== 11) return a; if (m >= 2 && m <= 4 && (h < 10 || h >= 20)) return b; return c; }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+  function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+  /* ================= static data ================= */
+  var DIFFS = {
+    easy:   { name: 'Лёгкая',  speed: 0.8, ramp: 5, tol: 1.5, wave: 3, coin: 0.8, rock: 1.5, bird: 1.6, bossHp: 4, bossGap: 1.9, base: 1.1 },
+    normal: { name: 'Обычная', speed: 1.0, ramp: 7, tol: 1.0, wave: 4, coin: 1.0, rock: 1.0, bird: 1.0, bossHp: 5, bossGap: 1.4, base: 1.0 },
+    hard:   { name: 'Сложная', speed: 1.2, ramp: 9, tol: 0.7, wave: 5, coin: 1.5, rock: 0.7, bird: 0.7, bossHp: 7, bossGap: 1.0, base: 0.9 }
+  };
+  var DNOTE = {
+    easy: 'Лёгкая: медленный темп, широкий допуск, монеты ×0,8. В таблицу лидеров не идёт.',
+    normal: 'Обычная: темп растёт с каждым этажом, монеты ×1.',
+    hard: 'Сложная: быстрый темп, узкий допуск, частые препятствия, монеты ×1,5.'
+  };
+  var MODES = {
+    classic: { name: 'Классика', note: 'Классика: пока башня стоит. Рекорд идёт в таблицу лидеров.' },
+    timed:   { name: 'На время', note: 'На время: 60 секунд, набери как можно больше очков.' },
+    nomist:  { name: 'Без ошибок', note: 'Без ошибок: любое неидеальное попадание заканчивает игру. Допуск чуть шире.' },
+    endless: { name: 'Бесконечный', note: 'Бесконечный: три жизни. Полный промах отнимает жизнь, а не заканчивает игру. Каждые 5 идеальных подряд дают жизнь. В таблицу не идёт.' },
+    night:   { name: 'Ночь', note: 'Ночь: темно, блок мерцает, препятствия идут с 10 очков. Монеты ×1,5.' },
+    daily:   { name: 'Вызов дня', note: 'Вызов дня: одинаковые препятствия у всех, одна попытка в день, отдельная таблица.' }
+  };
+  var KINDS = ['wind', 'meteor', 'fog', 'birds'];
+  var KIND_NAMES = { wind: 'Ветер', meteor: 'Метеориты', fog: 'Туман', birds: 'Птицы' };
+  var KIND_HINT = { wind: 'Темп блока скачет.', meteor: 'Камни срезают кусок блока.', fog: 'Блок пропадает из виду.', birds: 'Птицы толкают блок.' };
+  var SEASON = (function () { var m = new Date().getMonth(); return m === 9 ? 'pumpkin' : m === 11 ? 'frost' : ''; })();
+  var BOSSES = { shooter: 'Стрелок', gust: 'Вихрь', ghost: 'Призрак', pumpkin: 'Тыквоголовый', frost: 'Ледяной король', dragon: 'Дракон', octo: 'Осьминог', bat: 'Летучая мышь' };
+  var BOSS_HINT = { shooter: 'Стреляет камнями.', gust: 'Бьёт порывами и меняет направление.', ghost: 'Прячет твой блок и стреляет.', pumpkin: 'Сезонный босс октября: швыряет камни.', frost: 'Сезонный босс декабря: швыряет камни.', dragon: 'Стреляет быстрыми огненными камнями.', octo: 'Бросает три камня веером.', bat: 'Быстро летает и часто стреляет.' };
+  var BONUS = { shield: 'Щит', slow: 'Замедление', magnet: 'Магнит' };
+  var BONUS_HINT = { shield: 'Щит спасёт от одного промаха.', slow: 'Замедление на 5 этажей.', magnet: 'Магнит: следующее касание станет идеальным.' };
+
+  var SKINS = [
+    { id: 'sunset', name: 'Закат', cost: 0, style: function (i) { var h = (330 + i * 13) % 360; return { f: 'hsl(' + h + ' 64% 60%)', t: 'hsl(' + h + ' 72% 74%)', b: 'hsl(' + h + ' 60% 46%)' }; } },
+    { id: 'mint', name: 'Мята', cost: 40, style: function (i) { var h = Math.round(165 + 35 * Math.sin(i * 0.4)); return { f: 'hsl(' + h + ' 52% 50%)', t: 'hsl(' + h + ' 62% 68%)', b: 'hsl(' + h + ' 56% 38%)' }; } },
+    { id: 'graphite', name: 'Графит', cost: 90, style: function (i) { var l = 36 + (i % 3) * 5; return { f: 'hsl(225 14% ' + l + '%)', t: 'hsl(225 18% ' + (l + 16) + '%)', b: 'hsl(225 14% ' + (l - 10) + '%)' }; } },
+    { id: 'neon', name: 'Неон', cost: 180, style: function (i) { var h = (175 + i * 9) % 360; return { f: 'hsl(' + h + ' 70% 14%)', t: 'hsl(' + h + ' 100% 64%)', b: 'hsl(' + h + ' 80% 8%)', s: 'hsl(' + h + ' 100% 62%)' }; } },
+    { id: 'gold', name: 'Золото', cost: 350, style: function (i) { var l = 50 + Math.round(5 * Math.sin(i * 0.6)); return { f: 'hsl(42 88% ' + l + '%)', t: 'hsl(49 100% 74%)', b: 'hsl(34 82% 36%)' }; } },
+    { id: 'aurora', name: 'Аврора', cost: 0, need: 'daily3', style: function (i) { var h = 140 + ((i * 11) % 160); return { f: 'hsl(' + h + ' 70% 55%)', t: 'hsl(' + h + ' 90% 76%)', b: 'hsl(' + h + ' 66% 38%)', s: 'hsla(' + h + ',100%,85%,0.7)' }; } }
+  ];
+  function findSkin(id) { for (var i = 0; i < SKINS.length; i++) if (SKINS[i].id === id) return SKINS[i]; return null; }
+
+  var THEMES = [
+    { id: 'dusk', name: 'Закат', need: null },
+    { id: 'day', name: 'День', need: 'f10' },
+    { id: 'space', name: 'Космос', need: 'boss1' },
+    { id: 'winter', name: 'Зима', need: 'p100' }
+  ];
+  var SKY = {
+    day: ['hsl(212 46% 32%)', 'hsl(205 50% 48%)', 'hsl(32 62% 70%)'],
+    space: ['hsl(252 60% 6%)', 'hsl(262 55% 14%)', 'hsl(285 50% 26%)'],
+    winter: ['hsl(218 32% 24%)', 'hsl(210 36% 40%)', 'hsl(198 40% 68%)'],
+    night: ['hsl(232 55% 5%)', 'hsl(228 52% 10%)', 'hsl(224 50% 18%)']
+  };
+
+  var ACH = [
+    { id: 'f10', name: 'Десятый этаж', desc: 'Построй башню из 10 этажей', test: function (s, g) { return g.floors >= 10; }, note: 'Открывает фон «День»' },
+    { id: 'f25', name: 'Небоскрёб', desc: 'Построй башню из 25 этажей', test: function (s, g) { return g.floors >= 25; } },
+    { id: 'p50', name: 'Полсотни', desc: 'Набери 50 очков за партию', test: function (s, g) { return g.points >= 50; } },
+    { id: 'p100', name: 'Сотня', desc: 'Набери 100 очков за партию', test: function (s, g) { return g.points >= 100; }, note: 'Открывает фон «Зима»' },
+    { id: 'combo5', name: 'Снайпер', desc: '5 идеальных подряд', test: function (s) { return s.maxCombo >= 5; } },
+    { id: 'combo10', name: 'Хирург', desc: '10 идеальных подряд', test: function (s) { return s.maxCombo >= 10; } },
+    { id: 'boss1', name: 'Охотник на боссов', desc: 'Победи босса', test: function (s) { return s.bosses >= 1; }, note: 'Открывает фон «Космос»' },
+    { id: 'boss3', name: 'Гроза боссов', desc: 'Победи трёх боссов', test: function (s) { return s.bosses >= 3; } },
+    { id: 'wave5', name: 'Сквозь бурю', desc: 'Пройди 5 препятствий', test: function (s) { return s.waves >= 5; } },
+    { id: 'gift5', name: 'Коллекционер', desc: 'Поймай 5 подарков', test: function (s) { return s.gifts >= 5; } },
+    { id: 'hard30', name: 'Закалка', desc: '30 очков на сложной классике', test: function (s, g) { return g.mode === 'classic' && g.diff === 'hard' && g.points >= 30; } },
+    { id: 'nomist10', name: 'Без права на ошибку', desc: '10 этажей в режиме без ошибок', test: function (s, g) { return g.mode === 'nomist' && g.floors >= 10; } },
+    { id: 'night20', name: 'Ночной дозор', desc: '20 очков в режиме «Ночь»', test: function (s, g) { return g.mode === 'night' && g.points >= 20; } },
+    { id: 'daily1', name: 'Вызов принят', desc: 'Сыграй вызов дня', test: function (s) { return s.daily >= 1; } },
+    { id: 'daily3', name: 'Постоянство', desc: 'Сыграй вызов дня 3 раза', test: function (s) { return s.daily >= 3; }, note: 'Открывает скин «Аврора»' },
+    { id: 'duel1', name: 'Первая победа', desc: 'Выиграй дуэль башен', test: function (s) { return s.duelWins >= 1; } },
+    { id: 'word1', name: 'Быстрые пальцы', desc: 'Выиграй дуэль слов', test: function (s) { return s.wordWins >= 1; } },
+    { id: 'games25', name: 'Завсегдатай', desc: 'Сыграй 25 партий', test: function (s) { return s.games >= 25; } }
+  ];
+  var STAT_KEYS = ['games', 'perfects', 'bosses', 'waves', 'maxCombo', 'maxFloors', 'points', 'gifts', 'duels', 'duelWins', 'wordWins', 'daily'];
+  var STAT_NAMES = { games: 'Партий', perfects: 'Идеальных', bosses: 'Боссов', waves: 'Препятствий', maxCombo: 'Лучшая серия', maxFloors: 'Макс. этажей', points: 'Всего очков', gifts: 'Подарков', duels: 'Дуэлей', duelWins: 'Побед в дуэлях', wordWins: 'Побед в словах', daily: 'Вызовов дня' };
+
+  var TPL = {
+    floors: { text: function (g) { return 'Построй башню из ' + g + ' этажей'; }, goals: [8, 15, 25, 40], reward: [15, 30, 50, 80] },
+    perfect: { text: function (g) { return 'Сделай ' + g + ' идеальных попаданий'; }, goals: [5, 12, 25, 40], reward: [15, 30, 50, 80], cum: true },
+    combo: { text: function (g) { return 'Серия из ' + g + ' идеальных подряд'; }, goals: [3, 5, 7, 10], reward: [20, 35, 55, 90] },
+    points: { text: function (g) { return 'Набери ' + g + ' очков за одну игру'; }, goals: [20, 40, 80, 140], reward: [20, 35, 60, 100] },
+    games: { text: function (g) { return 'Сыграй ' + g + ' партий'; }, goals: [3, 5, 8, 12], reward: [10, 20, 30, 45], cum: true },
+    waves: { text: function (g) { return 'Пройди препятствий: ' + g; }, goals: [2, 4, 6, 10], reward: [20, 35, 60, 100], cum: true },
+    boss: { text: function (g) { return g === 1 ? 'Победи босса' : 'Победи босса ' + g + ' раза'; }, goals: [1, 2, 3, 4], reward: [30, 50, 80, 120], cum: true },
+    gifts: { text: function (g) { return 'Поймай подарков: ' + g; }, goals: [2, 4, 6, 9], reward: [15, 25, 40, 60], cum: true },
+    duel: { text: function (g) { return g === 1 ? 'Выиграй дуэль' : 'Выиграй дуэлей: ' + g; }, goals: [1, 2, 3, 4], reward: [25, 45, 70, 100], cum: true }
+  };
+
+  var WORDS = ['башня', 'блок', 'высота', 'удача', 'скорость', 'ракета', 'звезда', 'метеор', 'туман', 'ветер', 'птица', 'монета', 'магнит', 'награда', 'рекорд', 'вершина', 'камень', 'облако', 'молния', 'планета', 'корабль', 'дракон', 'замок', 'победа', 'точность', 'баланс', 'паркет', 'фундамент', 'кирпич', 'мостик', 'огонь', 'лавина', 'вулкан', 'комета', 'галактика', 'маяк', 'радуга', 'сугроб', 'метель', 'восход', 'закат', 'полночь', 'компас', 'якорь', 'факел', 'кристалл', 'спираль', 'горизонт', 'пирамида', 'небосвод'];
+  var BOTS = {
+    easy:   { name: 'Лёгкий',  int: 1.7,  perf: 0.12, fall: 0.07,  off: 0.55, react: 1.3, cpc: 0.48 },
+    mid:    { name: 'Средний', int: 1.25, perf: 0.30, fall: 0.035, off: 0.40, react: 0.95, cpc: 0.32 },
+    hard:   { name: 'Сильный', int: 0.95, perf: 0.55, fall: 0.012, off: 0.30, react: 0.6, cpc: 0.2 }
+  };
+
+  /* ================= progress ================= */
+  function normalize(p) {
+    p = p && typeof p === 'object' ? p : {};
+    var pb = p.bests && typeof p.bests === 'object' ? p.bests : {};
+    var mb = p.mbest && typeof p.mbest === 'object' ? p.mbest : {};
+    var ps = p.stats && typeof p.stats === 'object' ? p.stats : {};
+    var pa = p.ach && typeof p.ach === 'object' ? p.ach : {};
+    var pd = p.day && typeof p.day === 'object' ? p.day : {};
+    var pw = p.week && typeof p.week === 'object' ? p.week : {};
+    var o = {
+      coins: Math.max(0, +p.coins || 0),
+      skin: typeof p.skin === 'string' ? p.skin : 'sunset',
+      owned: Array.isArray(p.owned) ? p.owned.filter(function (s) { return typeof s === 'string' && findSkin(s); }) : ['sunset'],
+      bests: { easy: Math.max(0, +pb.easy || 0), normal: Math.max(0, +pb.normal || +p.best || 0), hard: Math.max(0, +pb.hard || 0) },
+      mbest: { timed: Math.max(0, +mb.timed || 0), nomist: Math.max(0, +mb.nomist || 0), night: Math.max(0, +mb.night || 0), endless: Math.max(0, +mb.endless || 0) },
+      g2: Math.max(0, +p.g2 || 0),
+      inv: { shield: Math.max(0, +(p.inv && p.inv.shield) || 0), slow: Math.max(0, +(p.inv && p.inv.slow) || 0), magnet: Math.max(0, +(p.inv && p.inv.magnet) || 0) },
+      diff: DIFFS[p.diff] ? p.diff : 'normal',
+      mode: MODES[p.mode] ? p.mode : 'classic',
+      theme: typeof p.theme === 'string' ? p.theme : 'dusk',
+      done: Math.max(0, +p.done || 0),
+      t: +p.t || 0,
+      ach: {}, stats: {},
+      day: { k: typeof pd.k === 'string' ? pd.k : '', s: Math.max(0, +pd.s || 0) },
+      week: { k: typeof pw.k === 'string' ? pw.k : '', n: Math.max(0, +pw.n || 0), h: Math.max(0, +pw.h || 0) },
+      login: { k: p.login && typeof p.login.k === 'string' ? p.login.k : '', n: Math.max(0, +(p.login && p.login.n) || 0) },
+      tut: p.tut ? 1 : 0,
+      music: p.music === 0 ? 0 : 1,
+      quests: []
+    };
+    ACH.forEach(function (a) { if (pa[a.id]) o.ach[a.id] = 1; });
+    STAT_KEYS.forEach(function (k) { o.stats[k] = Math.max(0, +ps[k] || 0); });
+    if (o.owned.indexOf('sunset') < 0) o.owned.push('sunset');
+    if (!findSkin(o.skin)) o.skin = 'sunset';
+    var seen = {};
+    (Array.isArray(p.quests) ? p.quests : []).forEach(function (q) {
+      if (q && TPL[q.k] && !seen[q.k] && o.quests.length < 3 && +q.goal > 0) {
+        seen[q.k] = 1;
+        o.quests.push({ k: q.k, goal: +q.goal, reward: Math.max(1, +q.reward || 10), p: Math.max(0, Math.min(+q.p || 0, +q.goal)) });
+      }
+    });
+    while (o.quests.length < 3) o.quests.push(makeQuest(o));
+    return o;
+  }
+  function makeQuest(o) {
+    var tier = Math.min(3, Math.floor((o.done || 0) / 5));
+    var taken = {};
+    o.quests.forEach(function (q) { if (q) taken[q.k] = 1; });
+    var keys = Object.keys(TPL).filter(function (k) { return !taken[k]; });
+    var k = keys[Math.floor(Math.random() * keys.length)];
+    return { k: k, goal: TPL[k].goals[tier], reward: TPL[k].reward[tier], p: 0 };
+  }
+  var prog;
+  try { prog = normalize(JSON.parse(localStorage.getItem('stopka-prog'))); } catch (e) { prog = normalize(null); }
+  mode = prog.mode;
+
+  function lbBest() { return Math.max(prog.bests.normal, prog.bests.hard); }
+  function skinOwned(s) { return prog.owned.indexOf(s.id) >= 0 || !!(s.need && prog.ach[s.need]); }
+  function themeOpen(t) { return !t.need || !!prog.ach[t.need] || (t.id === 'winter' && new Date().getMonth() === 11); }
+  function diffNow() {
+    if (mode === 'daily' || duel) return DIFFS.normal;
+    return DIFFS[prog.diff] || DIFFS.normal;
+  }
+
+  /* ================= cloud: progress + shared leaderboard ================= */
+  var userNs = null, dbNs = null, roomNs = null, uid = null, progRef = null, scoreRef = null;
+  var dbState = 'loading', canWrite = null;
+  var lbDocs = null, lbError = '', lbTok = 0, sheetName = '';
+  var saveTimer = 0, saving = false, dirty = false, scoreChain = Promise.resolve();
+
+  function saveProg(now) {
+    prog.t = Date.now();
+    try { localStorage.setItem('stopka-prog', JSON.stringify(prog)); } catch (e) {}
+    dirty = true;
+    if (now) { if (saveTimer) { clearTimeout(saveTimer); saveTimer = 0; } flush(); return; }
+    if (!saveTimer) saveTimer = setTimeout(flush, 900);
+  }
+  function flush() {
+    saveTimer = 0;
+    if (!progRef || !dirty) return;
+    if (saving) { saveTimer = setTimeout(flush, 400); return; }
+    dirty = false; saving = true;
+    progRef.set(JSON.parse(JSON.stringify(prog))).catch(function () {}).then(function () { saving = false; if (dirty && !saveTimer) saveTimer = setTimeout(flush, 400); });
+  }
+  function scoreDoc() {
+    var wk = weekKey(), w = prog.week.k === wk ? prog.week : { n: 0, h: 0 };
+    return { best: lbBest(), bn: prog.bests.normal, bh: prog.bests.hard, wk: wk, wn: w.n, wh: w.h, dk: prog.day.k, ds: prog.day.s, t: Date.now() };
+  }
+  function queueScore() {
+    if (!scoreRef || canWrite === false) return;
+    if (lbBest() <= 0 && !prog.day.s) return;
+    scoreChain = scoreChain.then(function () { return scoreRef.set(scoreDoc()); }).catch(function () {});
+  }
+  function initCloud() {
+    if (!window.claude || !window.claude.use) { dbState = 'off'; return Promise.resolve(); }
+    window.claude.use('room').then(function (r) { roomNs = r || null; if (sheetName === 'duel') renderDuel(); }).catch(function () {});
+    return Promise.all([window.claude.use('user'), window.claude.use('db')]).then(function (r) {
+      userNs = r[0]; dbNs = r[1];
+      if (!userNs || !dbNs) { dbState = 'off'; return; }
+      return userNs.id().then(function (id) {
+        uid = id;
+        if (!uid) { dbState = 'off'; return; }
+        return userNs.can('data.write').then(function (cw) {
+          canWrite = cw;
+          progRef = dbNs.doc('data/users/' + uid + '/progress');
+          scoreRef = dbNs.doc('scores/' + uid);
+          return progRef.get().then(function (s) {
+            if (s.exists) {
+              var remote = normalize(s.data());
+              if ((remote.t || 0) > (prog.t || 0)) { prog = remote; mode = prog.mode; applyProg(); }
+            }
+          }).catch(function () {}).then(function () {
+            dbState = 'ready';
+            dbNs.collection('scores').limit(300).onSnapshot(function (snap) {
+              lbDocs = snap.docs.map(function (d) { return { id: d.id, d: d.data() || {} }; });
+              lbError = '';
+              if (sheetName === 'lb') renderLb();
+            }, function (e) {
+              lbError = (e && e.code) || 'unavailable';
+              if (sheetName === 'lb') renderLb();
+            });
+            queueScore();
+            if (sheetName === 'lb') renderLb();
+          });
+        });
+      });
+    }).catch(function () { dbState = 'off'; });
+  }
+
+  /* ================= toasts, quests, achievements ================= */
+  function toast(msg, ms) {
+    toastQ.push({ m: msg, ms: ms || 2200 });
+    if (!toastBusy) nextToast();
+  }
+  function nextToast() {
+    var t = toastQ.shift();
+    if (!t) { toastBusy = false; toastEl.hidden = true; return; }
+    toastBusy = true;
+    toastEl.textContent = t.m; toastEl.hidden = false;
+    toastTimer = setTimeout(nextToast, toastQ.length ? Math.min(t.ms, 1500) : t.ms);
+  }
+  function qEvent(k, v) {
+    var changed = false;
+    prog.quests.forEach(function (q) {
+      if (q.k !== k || q.p >= q.goal) return;
+      var np = Math.min(q.goal, TPL[k].cum ? q.p + v : Math.max(q.p, v));
+      if (np === q.p) return;
+      q.p = np; changed = true;
+      if (np >= q.goal) toast('Задание выполнено. Забери награду');
+    });
+    if (changed) { saveProg(); renderCoins(); }
+  }
+  function checkAch(g) {
+    g = g || lastG || { floors: 0, points: 0, mode: 'classic', diff: 'normal' };
+    var got = false;
+    ACH.forEach(function (a) {
+      if (prog.ach[a.id]) return;
+      var ok = false;
+      try { ok = a.test(prog.stats, g); } catch (e) {}
+      if (ok) {
+        prog.ach[a.id] = 1; prog.coins += 20; got = true;
+        toast('Достижение: ' + a.name + ' · +20 монет' + (a.note ? '. ' + a.note : ''), 3200);
+      }
+    });
+    if (got) { saveProg(); renderCoins(); }
+  }
+
+  /* ================= hud ================= */
+  function floorsNow() { return blocks.length - 1; }
+  function speedNow(d) {
+    var s = Math.min(150 * d.speed + floorsNow() * d.ramp, 520);
+    if (effects.slow > 0) s *= 0.55;
+    return s;
+  }
+  function modeLabel() { return duel ? 'Дуэль' : MODES[mode].name; }
+  function setHud() {
+    var d = diffNow();
+    if (scoreEl.textContent !== String(points) && state === 'play') { scoreEl.classList.remove('pop'); void scoreEl.offsetWidth; scoreEl.classList.add('pop'); }
+    if (scoreEl.textContent !== String(points)) { scoreEl.textContent = points; scoreEl.classList.remove('bump'); void scoreEl.offsetWidth; scoreEl.classList.add('bump'); }
+    scoreEl.style.visibility = (state === 'ready' || state === 'word') ? 'hidden' : '';
+    var pbn = document.getElementById('pauseBtn'); if (pbn) pbn.hidden = !(state === 'play' && !duel);
+    hintEl.hidden = !(state === 'play' && floorsNow() === 0 && !duel);
+    tempoEl.textContent = (state === 'word' || state === 'ready') ? '' : 'Темп ×' + (speedNow(d) / 150).toFixed(1).replace('.', ',') + ' · ' + (duel ? 'Дуэль' : d.name);
+    var fxs = [];
+    if (effects.shield) fxs.push('Щит');
+    if (effects.slow > 0) fxs.push('Замедление ' + effects.slow);
+    if (effects.magnet) fxs.push('Магнит');
+    if (mode === 'endless' && !duel && state === 'play') fxs.push('Жизни ' + lives);
+    fxEl.textContent = fxs.join(' · ');
+    if (state === 'play' && timeLeft > 0) { timerEl.hidden = false; timerEl.textContent = Math.ceil(timeLeft) + ' с'; }
+    else if (state !== 'word' && state !== 'wait') timerEl.hidden = true;
+  }
+  function updateWaveLabel() {
+    if (!wave) { waveEl.hidden = true; return; }
+    var nm = wave.kind === 'boss' ? 'Босс «' + BOSSES[wave.bt] + '»' : KIND_NAMES[wave.kind];
+    waveEl.textContent = nm + ' · ещё ' + wave.left + ' ' + pl(wave.left, 'этаж', 'этажа', 'этажей');
+    waveEl.hidden = false;
+  }
+  function readyCount() { return prog.quests.filter(function (q) { return q.p >= q.goal; }).length; }
+  function renderCoins() {
+    $('coinN').textContent = prog.coins;
+    $('sheetCoins').textContent = prog.coins;
+    var n = readyCount(), b = $('qBadge');
+    b.hidden = n === 0; b.textContent = n;
+  }
+  function bestNow() {
+    if (mode === 'classic') return prog.bests[prog.diff];
+    if (mode === 'daily') return prog.day.k === dayKey() ? prog.day.s : 0;
+    return prog.mbest[mode] || 0;
+  }
+  function refreshBest() { bestEl.textContent = 'Рекорд ' + bestNow(); }
+  function updateMenuUI() {
+    Array.prototype.forEach.call(modesEl.querySelectorAll('button'), function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-m') === mode)); });
+    Array.prototype.forEach.call(diffEl.querySelectorAll('button'), function (b) { b.setAttribute('aria-pressed', String(b.getAttribute('data-d') === prog.diff)); });
+    var act = modesEl.querySelector('[aria-pressed="true"]');
+    if (act) {
+      var l = act.offsetLeft - modesEl.offsetLeft, r = l + act.offsetWidth;
+      if (r > modesEl.scrollLeft + modesEl.clientWidth) modesEl.scrollLeft = r - modesEl.clientWidth + 8;
+      else if (l < modesEl.scrollLeft) modesEl.scrollLeft = Math.max(0, l - 8);
+    }
+    diffEl.hidden = mode === 'daily';
+    if (typeof renderShop === 'function') renderShop();
+    var played = mode === 'daily' && prog.day.k === dayKey();
+    diffNote.textContent = MODES[mode].note + (mode === 'classic' ? ' ' + DNOTE[prog.diff] : '') + (played ? ' Сегодня уже сыграно: ' + prog.day.s + '.' : '');
+    $('startLbl').textContent = played ? 'Уже сыграно' : 'Играть';
+    refreshBest();
+    setHud();
+  }
+  function applyProg() {
+    renderCoins();
+    updateMenuUI();
+    musicBtn.setAttribute('aria-pressed', String(!!prog.music));
+    if (sheetName === 'skins') renderSkins();
+    if (sheetName === 'quests') renderQuests();
+    if (sheetName === 'ach') renderAch();
+  }
+
+  /* ================= audio and music ================= */
+  var musOn = false, musStep = 0, musTimer = 0;
+  function audio() {
+    if (ac) { if (ac.state === 'suspended') { try { ac.resume(); } catch (e) {} } return; }
+    try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { ac = null; }
+  }
+  function tone(f, d, type, vol) {
+    if (!ac) return;
+    try {
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || 'triangle';
+      o.frequency.value = f;
+      g.gain.setValueAtTime(vol || 0.12, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + d);
+      o.connect(g); g.connect(ac.destination);
+      o.start(); o.stop(ac.currentTime + d);
+    } catch (e) {}
+  }
+  function beep(f, d, type, vol) { if (!muted) tone(f, d, type, vol); }
+  function buzz(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (e) {} }
+  var noiseBuf = null;
+  function hat(vol) {
+    if (!ac) return;
+    try {
+      if (!noiseBuf) {
+        noiseBuf = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.05), ac.sampleRate);
+        var dd = noiseBuf.getChannelData(0);
+        for (var i = 0; i < dd.length; i++) dd[i] = (Math.random() * 2 - 1) * (1 - i / dd.length);
+      }
+      var s = ac.createBufferSource(), g = ac.createGain(), f = ac.createBiquadFilter();
+      s.buffer = noiseBuf; f.type = 'highpass'; f.frequency.value = 6000; g.gain.value = vol;
+      s.connect(f); f.connect(g); g.connect(ac.destination); s.start();
+    } catch (e) {}
+  }
+  function drum() {
+    if (!ac) return;
+    try {
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.setValueAtTime(140, ac.currentTime);
+      o.frequency.exponentialRampToValueAtTime(45, ac.currentTime + 0.14);
+      g.gain.setValueAtTime(0.1, ac.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + 0.18);
+      o.connect(g); g.connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.2);
+    } catch (e) {}
+  }
+  var CHORDS = [[0, [0, 3, 7, 12]], [-4, [0, 4, 7, 12]], [3, [0, 4, 7, 12]], [-2, [0, 4, 7, 12]]];
+  var ARP = [0, 1, 2, 3, 2, 1, 2, 3];
+  function musicKick() {
+    if (musTimer) { clearTimeout(musTimer); musTimer = 0; }
+    musOn = true;
+    musicLoop();
+  }
+  function musicLoop() {
+    musTimer = 0;
+    if (!musOn || !ac || !prog.music) { musOn = false; return; }
+    var playing = state === 'play' || state === 'word';
+    var bpm = playing ? 104 + Math.min(60, (state === 'word' ? 15 : floorsNow()) * 1.6) : 84;
+    var bar = Math.floor(musStep / 8) % 4, st = musStep % 8, ch = CHORDS[bar];
+    var fq = function (semi) { return 220 * Math.pow(2, semi / 12); };
+    tone(fq(ch[0] + ch[1][ARP[st]] + 12), 0.28, 'triangle', 0.03);
+    if (st === 0 || st === 4) tone(fq(ch[0] - 12), 0.4, 'sine', 0.07);
+    if (st === 0) tone(fq(ch[0] + ch[1][2] + 24), 1.0, 'sine', 0.012);
+    if (playing) { if (st === 0 || st === 4) drum(); if (st % 2 === 1) hat(0.02); }
+    musStep++;
+    musTimer = setTimeout(musicLoop, 60000 / bpm / 2);
+  }
+
+  /* ================= canvas, layout ================= */
+  function genBackdrop() {
+    var seed = 7;
+    function r() { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; }
+    stars = [];
+    for (var i = 0; i < 90; i++) stars.push({ x: r(), y: r() * 0.8, r: 0.6 + r() * 1.4, p: r() * 6, s: 0.6 + r() * 1.6 });
+    flakes = [];
+    for (var j = 0; j < 46; j++) flakes.push({ x: r(), y: r(), r: 1 + r() * 2.2, s: 18 + r() * 40, p: r() * 6 });
+    far = []; near = [];
+    var x = -10, w;
+    while (x < W + 60) { w = 26 + r() * 40; far.push({ x: x, w: w, h: 60 + r() * 110, lit: r() }); x += w + 3 + r() * 8; }
+    x = -20;
+    while (x < W + 80) { w = 34 + r() * 34; near.push({ x: x, w: w, h: 34 + r() * 70, lit: r() }); x += w + 6 + r() * 14; }
+  }
+  function resize() {
+    var r = stage.getBoundingClientRect();
+    var nw = Math.max(200, Math.floor(r.width));
+    var nh = Math.max(300, Math.floor(r.height));
+    var k = W ? nw / W : 1;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = Math.round(nw * dpr);
+    cv.height = Math.round(nh * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    W = nw; H = nh;
+    baseW = Math.round(Math.min(230, W * 0.6));
+    bh = Math.round(Math.max(24, Math.min(34, H / 17)));
+    if (k !== 1) {
+      blocks.forEach(function (b) { b.x *= k; b.w *= k; });
+      mx *= k; mw *= k;
+    }
+    genBackdrop();
+  }
+  function topY(i) { return H - 24 - bh * (i + 1) + camY; }
+  function capW() { return Math.round(baseW * diffNow().base); }
+  function hitRect(ax, ay, aw, ah, bx, by, bw, bh2) { return ax < bx + bw && ax + aw > bx && ay < by + bh2 && ay + ah > by; }
+  function curTheme() { return mode === 'night' && !duel ? 'night' : prog.theme; }
+  function curG() { return { floors: floorsNow(), points: points, mode: duel ? 'duel' : mode, diff: prog.diff, combo: gctx.maxCombo }; }
+
+  function reset() {
+    paused = false; var pb0 = document.getElementById('pauseBtn'); if (pb0) { pb0.textContent = 'Пауза'; pb0.setAttribute('aria-pressed', 'false'); }
+    var bw = capW();
+    blocks = [{ x: (W - bw) / 2, w: bw }];
+    points = 0; combo = 0; camY = 0;
+    mw = bw; mx = 0; dir = 1;
+    debris = []; fx = []; pops = []; rocks = []; birds = [];
+    wave = null; nextMs = mode === 'night' && !duel ? 10 : 20; lastKind = ''; spawnT = 0; kick = 0; orb = null;
+    effects = { shield: 0, slow: 0, magnet: 0 };
+    lives = mode === 'endless' && !duel ? 3 : 0;
+    gctx = { maxCombo: 0, gifts: 0 };
+    updateWaveLabel();
+    setHud();
+  }
+
+  /* ================= gifts ================= */
+  var rW = Math.random, rO = Math.random;
+  function maybeOrb() {
+    orb = null;
+    if (duel || floorsNow() < 2) return;
+    if (rO() > 0.22) return;
+    var t = blocks[blocks.length - 1];
+    var kinds = ['shield', 'slow', 'magnet'];
+    orb = { x: t.x + t.w * (0.2 + 0.6 * rO()), k: kinds[Math.floor(rO() * 3)] };
+  }
+  function grabOrb() {
+    var k = orb.k;
+    if (k === 'shield') effects.shield = 1;
+    else if (k === 'slow') effects.slow = 5;
+    else effects.magnet = 1;
+    prog.stats.gifts++; gctx.gifts++;
+    qEvent('gifts', 1);
+    toast(BONUS[k] + '. ' + BONUS_HINT[k], 2600);
+    pops.push({ s: BONUS[k], y: topY(blocks.length) - 30, t: 0 });
+    beep(659, 0.12); beep(880, 0.18);
+    checkAch(curG());
+  }
+
+  /* ================= waves: obstacles and bosses ================= */
+  function bossGeom() {
+    var base = H - 24 - 8 * bh;
+    return { y: Math.max(232, base - 110), s: H < 560 ? 0.75 : 1 };
+  }
+  function startWave() {
+    var d = diffNow();
+    nextMs = Math.floor(points / 10) * 10 + 10;
+    spawnT = 1.0; kick = 0;
+    if (rW() < 0.3) {
+      var pool = ['shooter', 'gust', 'ghost', 'dragon', 'octo', 'bat']; if (SEASON) pool.push(SEASON);
+      var bt = pool[Math.floor(rW() * pool.length)];
+      wave = { kind: 'boss', bt: bt, left: 8, hp: d.bossHp, max: d.bossHp, t: 0, x: W / 2, atk: 1.2, tele: 0, hurt: 0, n: 0 };
+      toast('Босс «' + BOSSES[bt] + '». ' + BOSS_HINT[bt] + ' Идеальные попадания ранят его.', 3200);
+      beep(130, 0.5, 'sawtooth', 0.1);
+    } else {
+      var k;
+      do { k = KINDS[Math.floor(rW() * KINDS.length)]; } while (k === lastKind);
+      lastKind = k;
+      wave = { kind: k, left: d.wave, t: 0 };
+      toast('Препятствие: ' + KIND_NAMES[k] + '. ' + KIND_HINT[k], 3000);
+      beep(220, 0.25, 'square', 0.06);
+    }
+    updateWaveLabel();
+  }
+  function endWave(res) {
+    if (res === 'beaten') {
+      points += 10; prog.coins += 20;
+      prog.stats.bosses++;
+      toast('Босс побеждён: +10 очков, +20 монет', 3000);
+      beep(523, 0.2); beep(659, 0.3);
+      qEvent('boss', 1);
+    } else if (res === 'fled') {
+      toast('Босс улетел', 2200);
+    } else {
+      prog.coins += 5;
+      toast('Препятствие пройдено: +5 монет', 2200);
+    }
+    if (res !== 'fled') { prog.stats.waves++; qEvent('waves', 1); }
+    rocks = []; birds = []; wave = null; kick = 0;
+    nextMs = Math.floor(points / 10) * 10 + 10;
+    updateWaveLabel();
+    renderCoins();
+    saveProg();
+    checkAch(curG());
+  }
+  function spawnRock(x, y, vx, vy, s) { rocks.push({ x: x, y: y, vx: vx, vy: vy, s: s, rot: Math.random() * 6 }); }
+  function chip(my) {
+    var cut = Math.max(10, mw * 0.22);
+    var minW = bh * 1.6;
+    if (mw - cut < minW) cut = Math.max(0, mw - minW);
+    if (cut <= 0) return;
+    var left = Math.random() < 0.5;
+    debris.push({ x: left ? mx : mx + mw - cut, y: my, w: cut, vx: left ? -70 : 70, vy: -140, i: blocks.length, a: 1 });
+    if (left) mx += cut;
+    mw -= cut;
+    beep(150, 0.18, 'sawtooth', 0.09);
+    buzz(30);
+  }
+  function bossShoot(my, slow) {
+    var g = bossGeom();
+    var sy = g.y + 26 * g.s;
+    var vy = slow ? 300 : wave.bt === 'dragon' ? 430 : 360;
+    var tt = Math.max(0.25, (my - sy) / vy);
+    var tx = mx + mw / 2;
+    if (wave.bt === 'octo' && !slow) {
+      [-0.2, 0, 0.2].forEach(function (o) { spawnRock(wave.x, sy, (tx + o * W - wave.x) / tt, vy, 14); });
+    } else spawnRock(wave.x, sy, (tx - wave.x) / tt, vy, wave.bt === 'bat' ? 13 : 17);
+    beep(110, 0.2, 'square', 0.07);
+  }
+  function updateWave(dt, d, my) {
+    if (!wave) return;
+    wave.t += dt;
+    if (wave.kind === 'meteor') {
+      spawnT -= dt;
+      if (spawnT <= 0) {
+        spawnT = (0.7 + Math.random() * 0.6) * d.rock;
+        spawnRock(10 + Math.random() * (W - 20), -20, 0, 300 + Math.random() * 140, 15 + Math.random() * 8);
+      }
+    } else if (wave.kind === 'birds') {
+      spawnT -= dt;
+      if (spawnT <= 0) {
+        spawnT = (0.9 + Math.random() * 0.7) * d.bird;
+        var fromL = Math.random() < 0.5;
+        birds.push({ x: fromL ? -30 : W + 30, yo: bh * (0.15 + Math.random() * 0.7), vx: (fromL ? 1 : -1) * (190 + Math.random() * 110), ph: Math.random() * 6 });
+      }
+    } else if (wave.kind === 'boss') {
+      wave.x = W / 2 + Math.sin(wave.t * (wave.bt === 'gust' ? 1.3 : wave.bt === 'bat' ? 2.1 : 0.9)) * W * (wave.bt === 'bat' ? 0.32 : 0.26);
+      wave.hurt = Math.max(0, wave.hurt - dt);
+      if (wave.bt === 'gust') {
+        wave.atk -= dt;
+        if (wave.atk <= 0) {
+          wave.atk = 1.5 * d.bossGap / 1.4 + 0.3; wave.n++;
+          dir = -dir; kick = 0.45;
+          pops.push({ s: 'Порыв', y: my - 30, t: 0 });
+          beep(180, 0.2, 'sawtooth', 0.06);
+          if (wave.n % 3 === 0) bossShoot(my, true);
+        }
+      } else if (wave.tele > 0) {
+        wave.tele -= dt;
+        if (wave.tele <= 0) bossShoot(my, false);
+      } else {
+        wave.atk -= dt;
+        if (wave.atk <= 0) { wave.tele = 0.45; wave.atk = d.bossGap * (wave.bt === 'ghost' ? 1.7 : wave.bt === 'octo' ? 1.35 : wave.bt === 'bat' ? 0.8 : 1); }
+      }
+    }
+  }
+
+  /* ================= placing a block ================= */
+  var TIPS = { 1: 'Идеальное попадание даёт +2 очка', 3: 'Три идеальных подряд расширяют блок', 6: 'Лови подарки: щит, замедление, магнит', 10: 'С 20 очков появятся препятствия и боссы' };
+  var paused = false;
+  function setPause(v) {
+    var pb = document.getElementById('pauseBtn');
+    paused = !!v && state === 'play' && !duel;
+    pb.setAttribute('aria-pressed', String(paused));
+    pb.textContent = paused ? 'Продолжить' : 'Пауза';
+    if (paused) toast('Пауза. Нажми «Продолжить»');
+  }
+  document.addEventListener('visibilitychange', function () { if (document.hidden) setPause(true); });
+  function tap() {
+    if (state !== 'play' || paused) return;
+    var d = diffNow();
+    var t = blocks[blocks.length - 1];
+    var n = blocks.length;
+    var y = topY(n);
+    var mw0 = mw;
+    var L = Math.max(mx, t.x), R = Math.min(mx + mw, t.x + t.w), ov = R - L;
+    var tol = Math.max(3.5, W * 0.012) * d.tol * (mode === 'nomist' && !duel ? 1.3 : 1) + speedNow(d) * (W / 360) * 0.016;
+    var dmg = 0;
+
+    if (ov <= 0) {
+      if (mode === 'endless' && !duel && !effects.shield && lives > 1) {
+        lives--; combo = 0; mx = 0; dir = 1;
+        toast('Жизнь потеряна. Осталось ' + lives); beep(200, 0.25, 'sawtooth', 0.08); setHud();
+        return;
+      }
+      if (effects.shield) {
+        effects.shield = 0; combo = 0; mx = 0; dir = 1;
+        toast('Щит спас башню'); beep(440, 0.2); setHud();
+        return;
+      }
+      debris.push({ x: mx, y: y, w: mw, vx: 0, vy: 0, i: n, a: 1 });
+      die();
+      return;
+    }
+
+    var cm = mx + mw / 2, ct = t.x + t.w / 2;
+    var cutAmt = mw - ov;
+    var perfect = Math.abs(cm - ct) <= tol;
+    if (effects.magnet) {
+      effects.magnet = 0;
+      if (!perfect) { perfect = true; pops.push({ s: 'Магнит', y: y - 30, t: 0 }); }
+    }
+    if (!perfect && mode === 'nomist' && !duel) {
+      if (effects.shield) { effects.shield = 0; toast('Щит спас башню'); }
+      else { debris.push({ x: mx, y: y, w: mw, vx: 0, vy: 0, i: n, a: 1 }); die(); return; }
+    }
+
+    if (perfect) {
+      combo++;
+      if (mode === 'endless' && !duel && combo % 5 === 0 && lives < 5) { lives++; toast('+1 жизнь'); }
+      points += 2;
+      var nw = mw;
+      if (combo >= 3) nw = Math.min(capW(), mw + Math.round(bh * 0.25));
+      var nx = Math.max(0, Math.min(W - nw, ct - nw / 2));
+      blocks.push({ x: nx, w: nw });
+      mw = nw;
+      dmg = 2;
+      if (!reduce) {
+        fx.push({ x: nx, y: y, w: nw, t: 0 });
+        pops.push({ s: combo > 1 ? 'Идеально +2 · серия ' + combo : 'Идеально +2', y: y - 10, t: 0 });
+      }
+      beep(SCALE_N[Math.min(combo + 2, 7)], 0.16);
+      buzz(8);
+      prog.stats.perfects++;
+      gctx.maxCombo = Math.max(gctx.maxCombo, combo);
+      prog.stats.maxCombo = Math.max(prog.stats.maxCombo, combo);
+      qEvent('perfect', 1);
+      qEvent('combo', combo);
+    } else {
+      if (mx < L) debris.push({ x: mx, y: y, w: L - mx, vx: -50, vy: 0, i: n, a: 1 });
+      if (mx + mw > R) debris.push({ x: R, y: y, w: mx + mw - R, vx: 50, vy: 0, i: n, a: 1 });
+      blocks.push({ x: L, w: ov });
+      mw = ov;
+      combo = 0;
+      points += 1;
+      dmg = cutAmt <= mw0 * 0.2 ? 1 : 0;
+      beep(SCALE_N[Math.min(Math.floor(floorsNow() / 4), 4)], 0.1);
+    }
+    if (effects.slow > 0) effects.slow--;
+
+    var nb = blocks[blocks.length - 1];
+    if (orb && orb.x >= nb.x && orb.x <= nb.x + nb.w) grabOrb();
+    orb = null;
+
+    qEvent('floors', floorsNow());
+    qEvent('points', points);
+    if (!prog.tut && mode === 'classic' && !duel && TIPS[floorsNow()]) toast(TIPS[floorsNow()], 3400);
+
+    if (duel) { duelPlaced(); }
+    else if (wave) {
+      if (wave.kind === 'boss' && dmg > 0) {
+        wave.hp = Math.max(0, wave.hp - dmg);
+        wave.hurt = 0.25;
+        pops.push({ s: 'Босс −' + dmg, y: y - 36, t: 0 });
+        beep(90, 0.15, 'square', 0.08);
+      }
+      wave.left--;
+      if (wave.kind === 'boss' && wave.hp <= 0) endWave('beaten');
+      else if (wave.left <= 0) endWave(wave.kind === 'boss' ? 'fled' : 'done');
+      else updateWaveLabel();
+    } else if (points >= nextMs) {
+      startWave();
+    }
+    maybeOrb();
+    setHud();
+  }
+  var SCALE_N = [261.63, 293.66, 329.63, 392.0, 440.0, 523.25, 587.33, 659.25];
+
+  /* ================= end of a solo game ================= */
+  function contCost() { return Math.min(60, 10 + floorsNow()); }
+  function die() {
+    state = 'over';
+    beep(196, 0.35, 'sawtooth', 0.08);
+    buzz(60);
+    setHud();
+    if (duel) { duelMeFell(); return; }
+    var cost = contCost();
+    var allow = (mode === 'classic' || mode === 'night' || mode === 'endless') && !contUsed && floorsNow() >= 1;
+    if (allow && prog.coins >= cost) {
+      contPending = true;
+      $('contText').textContent = 'Вернуться на последний этаж за ' + cost + ' ' + pl(cost, 'монету', 'монеты', 'монет') + '? Очки сохранятся. Один раз за игру.';
+      $('contBtn').textContent = 'Продолжить · ' + cost;
+      setTimeout(function () { if (state === 'over' && contPending) contOv.hidden = false; }, 500);
+      return;
+    }
+    endGame('Башня упала');
+  }
+  function doContinue() {
+    var cost = contCost();
+    if (!contPending || prog.coins < cost) return;
+    prog.coins -= cost; contUsed = true; contPending = false;
+    contOv.hidden = true;
+    combo = 0; mw = Math.min(blocks[blocks.length - 1].w, capW()); mx = 0; dir = 1;
+    state = 'play';
+    saveProg(true); renderCoins(); setHud(); musicKick();
+  }
+  function declineContinue() {
+    if (!contPending) return;
+    contPending = false; contOv.hidden = true;
+    endGame('Башня упала');
+  }
+  function showOver(title, a, la, b, lb, coinsTxt, note) {
+    $('againBtn').hidden = false;
+    $('overTitle').textContent = title;
+    $('finalScore').textContent = a; $('lblA').textContent = la;
+    $('finalBest').textContent = b; $('lblB').textContent = lb;
+    $('finalCoins').textContent = coinsTxt;
+    $('overNote').textContent = note || '';
+    hintEl.hidden = true; waveEl.hidden = true; timerEl.hidden = true; wordBox.hidden = true;
+    setTimeout(function () { if (state === 'over') overOv.hidden = false; }, 600);
+  }
+  function endGame(title) {
+    var d = diffNow(), g = curG();
+    lastG = g;
+    var earned = Math.max(points >= 4 ? 1 : 0, Math.floor(points / 5 * d.coin * (mode === 'night' ? 1.5 : 1))), bonus = 0, note = '';
+    var s = prog.stats, isBest = false, bestShown;
+    s.games++; s.points += points; s.maxFloors = Math.max(s.maxFloors, g.floors);
+    if (mode === 'classic') {
+      isBest = points > prog.bests[prog.diff];
+      if (isBest) prog.bests[prog.diff] = points;
+      var wk = weekKey();
+      if (prog.week.k !== wk) prog.week = { k: wk, n: 0, h: 0 };
+      if (prog.diff === 'normal') prog.week.n = Math.max(prog.week.n, points);
+      if (prog.diff === 'hard') prog.week.h = Math.max(prog.week.h, points);
+      bestShown = prog.bests[prog.diff];
+    } else if (mode === 'daily') {
+      prog.day = { k: dayKey(), s: points };
+      s.daily++; bonus = 25; isBest = points > 0;
+      bestShown = points;
+      note = 'Вызов дня засчитан. Бонус +25 монет. Попытка на сегодня использована.';
+    } else {
+      isBest = points > prog.mbest[mode];
+      if (isBest) prog.mbest[mode] = points;
+      bestShown = prog.mbest[mode];
+    }
+    prog.coins += earned + bonus;
+    qEvent('floors', g.floors); qEvent('points', points); qEvent('games', 1);
+    var firstGame = !prog.tut;
+    prog.tut = 1;
+    checkAch(g);
+    saveProg(true);
+    if ((mode === 'classic' && prog.diff !== 'easy') || mode === 'daily') queueScore();
+    refreshBest(); renderCoins();
+    if (firstGame) note = 'Совет: загляни в «Задания» и «Успехи», там монеты и новые фоны.';
+    showOver(isBest && points > 0 && mode !== 'daily' ? 'Новый рекорд' : (title || 'Башня упала'), points, 'Очки', bestShown, mode === 'daily' ? 'Сегодня' : 'Рекорд', '+' + (earned + bonus), note);
+  }
+  function timeUp() {
+    state = 'over';
+    wave = null; rocks = []; birds = []; updateWaveLabel();
+    beep(330, 0.4, 'sawtooth', 0.07);
+    if (duel) { duelMeFell(true); return; }
+    endGame('Время вышло');
+  }
+
+  /* ================= menu flow ================= */
+  function startGame() {
+    closeSheet(); audio();
+    duel = null; wordBox.hidden = true; contOv.hidden = true; scoreEl.style.visibility = '';
+    if (mode === 'daily') {
+      if (prog.day.k === dayKey()) { toast('Вызов дня уже сыгран. Приходи завтра'); return; }
+      prog.day = { k: dayKey(), s: 0 }; saveProg(true);
+      rW = mulberry(seedOf(dayKey() + 'w')); rO = mulberry(seedOf(dayKey() + 'o'));
+    } else { rW = Math.random; rO = Math.random; }
+    reset();
+    if (mode !== 'daily') {
+      var used = [];
+      ['shield', 'slow', 'magnet'].forEach(function (k) {
+        if (prog.inv[k] > 0) { prog.inv[k]--; used.push(SHOP[k][0]); if (k === 'slow') effects.slow = 5; else effects[k] = 1; }
+      });
+      if (used.length) { saveProg(); toast('Взято с собой: ' + used.join(', ')); setHud(); renderShop(); }
+    }
+    contUsed = false; contPending = false;
+    timeLeft = mode === 'timed' ? 60 : 0;
+    state = 'play';
+    startOv.hidden = true; overOv.hidden = true;
+    updateMenuUI();
+    musicKick();
+  }
+  function toMenu() {
+    if (net.room) netLeave();
+    duel = null; contPending = false;
+    state = 'ready';
+    overOv.hidden = true; contOv.hidden = true; wordBox.hidden = true; scoreEl.style.visibility = ''; document.body.style.height = '';
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    startOv.hidden = false;
+    resize();
+    reset();
+    updateMenuUI();
+  }
+
+  /* ================= drawing ================= */
+  var skin = SKINS[0], lastSec = -1;
+  function applySky() {
+    var th = curTheme(), key, c;
+    if (th === 'dusk') {
+      key = 'd' + Math.round(bgH);
+      if (key === skyKey) return;
+      c = ['hsl(' + bgH.toFixed(0) + ' 34% 12%)', 'hsl(' + (bgH + 24).toFixed(0) + ' 32% 21%)', 'hsl(' + (bgH + 48).toFixed(0) + ' 34% 33%)'];
+    } else {
+      key = th;
+      if (key === skyKey) return;
+      c = SKY[th] || SKY.night;
+    }
+    skyKey = key;
+    var s = document.documentElement.style;
+    s.setProperty('--sky1', c[0]); s.setProperty('--sky2', c[1]); s.setProperty('--sky3', c[2]);
+  }
+  function blockStyle(i) { return skin.style(i); }
+  function drawBlock(x, y, w, i, alpha, hgt) {
+    var c = blockStyle(i), h = hgt || bh;
+    ctx.globalAlpha = alpha === undefined ? 1 : alpha;
+    ctx.fillStyle = c.f; ctx.fillRect(x, y, w, h - 1);
+    ctx.fillStyle = c.t; ctx.fillRect(x, y, w, Math.max(2, h * 0.13));
+    ctx.fillStyle = c.b; ctx.fillRect(x, y + h - Math.max(3, h * 0.16), w, Math.max(2, h * 0.13));
+    if (c.s) { ctx.strokeStyle = c.s; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, Math.max(0, w - 2), h - 3); }
+    ctx.globalAlpha = 1;
+  }
+  function glow(cx, cy, r, col, a) {
+    var g = ctx.createRadialGradient(cx, cy, r * 0.3, cx, cy, r * 2.8);
+    g.addColorStop(0, col.replace('A', a)); g.addColorStop(1, col.replace('A', 0));
+    ctx.fillStyle = g; ctx.fillRect(cx - r * 3, cy - r * 3, r * 6, r * 6);
+  }
+  function drawStars(k) {
+    var off = camY * 0.05;
+    stars.forEach(function (s, i) {
+      if (k < 1 && i % 3) return;
+      ctx.globalAlpha = (0.25 + 0.6 * (0.5 + 0.5 * Math.sin(bt * s.s + s.p))) * Math.min(1, k);
+      ctx.fillStyle = '#fff4ee';
+      ctx.fillRect(s.x * W, s.y * H + off, s.r, s.r);
+    });
+    ctx.globalAlpha = 1;
+  }
+  function drawClouds(a, big) {
+    var off = camY * 0.05;
+    ctx.fillStyle = 'rgba(255,244,238,' + a + ')';
+    for (var c = 0; c < 4; c++) {
+      var ccx = ((bt * 10 + c * (W / 3 + 60)) % (W + 300)) - 150;
+      var cy = H * (0.28 + c * 0.09) + off * 2;
+      ctx.beginPath(); ctx.ellipse(ccx, cy, big ? 96 : 90, big ? 20 : 16, 0, 0, Math.PI * 2); ctx.fill();
+      if (big) { ctx.beginPath(); ctx.ellipse(ccx + 34, cy - 12, 54, 18, 0, 0, Math.PI * 2); ctx.fill(); }
+    }
+  }
+  function drawSkyline(farC, nearC, windows) {
+    var y0 = H + camY * 0.18;
+    ctx.fillStyle = farC;
+    far.forEach(function (b) { ctx.fillRect(b.x, y0 - b.h, b.w, b.h + 400); });
+    y0 = H + camY * 0.34;
+    near.forEach(function (b) {
+      ctx.fillStyle = nearC; ctx.fillRect(b.x, y0 - b.h, b.w, b.h + 400);
+      if (!windows) return;
+      ctx.fillStyle = 'rgba(255,201,168,0.55)';
+      if (b.lit > 0.3) ctx.fillRect(b.x + 6, y0 - b.h + 10, 4, 5);
+      if (b.lit > 0.6) ctx.fillRect(b.x + b.w - 12, y0 - b.h + 24, 4, 5);
+      if (b.lit > 0.85) ctx.fillRect(b.x + 6, y0 - b.h + 38, 4, 5);
+    });
+  }
+  function drawHills(a1, a2) {
+    var base = H + camY * 0.2;
+    [[a1, 0.12, 70, 1.1], [a2, 0.2, 46, 1.7]].forEach(function (L) {
+      ctx.fillStyle = 'rgba(240,248,255,' + L[0] + ')';
+      ctx.beginPath(); ctx.moveTo(0, H + 400);
+      for (var x = 0; x <= W + 20; x += 20) ctx.lineTo(x, base - L[2] - Math.sin(x * 0.012 * L[3] + L[1] * 40) * L[2] * 0.6);
+      ctx.lineTo(W + 20, H + 400); ctx.closePath(); ctx.fill();
+    });
+  }
+  function drawBackdrop(th) {
+    var hh = ((bgH % 360) + 360) % 360, off = camY * 0.05;
+    var cx = W * 0.74, cy = H * 0.2 + camY * 0.06, r = Math.max(32, W * 0.1);
+    if (th === 'day') {
+      glow(cx, cy, r, 'rgba(255,230,150,A)', 0.55);
+      ctx.fillStyle = 'hsl(46 100% 74%)'; ctx.beginPath(); ctx.arc(cx, cy, r * 0.9, 0, Math.PI * 2); ctx.fill();
+      drawClouds(0.5, true);
+      drawSkyline('rgba(30,60,120,0.2)', 'rgba(30,50,110,0.36)', false);
+    } else if (th === 'space') {
+      var ng = ctx.createRadialGradient(W * 0.2, H * 0.55 + off, 10, W * 0.2, H * 0.55 + off, W * 0.6);
+      ng.addColorStop(0, 'rgba(140,70,200,0.28)'); ng.addColorStop(1, 'rgba(140,70,200,0)');
+      ctx.fillStyle = ng; ctx.fillRect(0, 0, W, H);
+      drawStars(1.2);
+      var pg = ctx.createLinearGradient(cx - r, cy - r, cx + r, cy + r);
+      pg.addColorStop(0, 'hsl(24 80% 62%)'); pg.addColorStop(1, 'hsl(330 60% 28%)');
+      ctx.fillStyle = pg; ctx.beginPath(); ctx.arc(cx, cy + off, r, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,220,190,0.55)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(cx, cy + off, r * 1.7, r * 0.42, -0.35, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = 'rgba(220,230,255,0.9)'; ctx.beginPath(); ctx.arc(W * 0.16, H * 0.3 + off, r * 0.22, 0, Math.PI * 2); ctx.fill();
+    } else if (th === 'winter') {
+      glow(cx, cy, r * 0.8, 'rgba(210,235,255,A)', 0.4);
+      ctx.fillStyle = 'hsl(205 70% 92%)'; ctx.beginPath(); ctx.arc(cx, cy, r * 0.8, 0, Math.PI * 2); ctx.fill();
+      drawStars(0.4);
+      drawHills(0.35, 0.6);
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      flakes.forEach(function (f) {
+        var y = (f.y * H + bt * f.s) % (H + 10), x = f.x * W + Math.sin(bt * 0.8 + f.p) * 12;
+        ctx.beginPath(); ctx.arc(x, y, f.r, 0, Math.PI * 2); ctx.fill();
+      });
+    } else {
+      var night = th === 'night', mh = night ? 215 : (hh + 60) % 360;
+      glow(cx, cy, r, 'hsla(' + mh + ',90%,80%,A)', night ? 0.7 : 0.5);
+      ctx.fillStyle = 'hsl(' + mh + ' ' + (night ? 40 : 85) + '% 86%)'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = 'hsla(' + mh + ',40%,70%,0.35)'; ctx.beginPath(); ctx.arc(cx - r * 0.3, cy - r * 0.15, r * 0.22, 0, Math.PI * 2); ctx.fill();
+      drawStars(night ? 1.3 : 1);
+      if (!night) drawClouds(0.07, false);
+      drawSkyline(night ? 'rgba(5,8,25,0.55)' : 'rgba(20,15,46,0.38)', night ? 'rgba(4,6,20,0.8)' : 'rgba(20,15,46,0.6)', true);
+    }
+  }
+  function bossBody(bt, flash, charge, t) {
+    var eye = charge ? '#ff6b7a' : '#ffe9b8', f = flash;
+    function C(c, fl) { return f ? (fl || '#fff4ee') : c; }
+    var k;
+    if (bt === 'shooter') {
+      ctx.fillStyle = C('#5d6b86'); ctx.fillRect(-30, -22, 60, 46);
+      ctx.fillStyle = C('#7c8aa6'); ctx.fillRect(-30, -22, 60, 7);
+      ctx.fillStyle = C('#3a4560'); ctx.fillRect(-2, -34, 4, 12); ctx.fillStyle = eye; ctx.beginPath(); ctx.arc(0, -36, 4, 0, 7); ctx.fill();
+      ctx.fillStyle = '#1d2438'; ctx.fillRect(-22, -10, 44, 14); ctx.fillStyle = eye; ctx.fillRect(-18 + Math.sin(t * 3) * 6, -7, 10, 8);
+      ctx.fillStyle = C('#3a4560'); ctx.fillRect(-12, 12, 24, 14);
+      ctx.fillStyle = '#1d2438'; ctx.fillRect(-7, 18, 14, 8);
+    } else if (bt === 'gust') {
+      ctx.fillStyle = C('#a9c9e6');
+      [[-18, 4, 18], [0, -6, 24], [20, 4, 17], [0, 10, 22]].forEach(function (c) { ctx.beginPath(); ctx.arc(c[0], c[1], c[2], 0, 7); ctx.fill(); });
+      ctx.strokeStyle = C('#e8f4ff'); ctx.lineWidth = 3; ctx.lineCap = 'round';
+      for (k = 0; k < 3; k++) { ctx.beginPath(); ctx.arc(0, 4, 10 + k * 6, t * 3 + k, t * 3 + k + 2.2); ctx.stroke(); }
+      ctx.fillStyle = eye; ctx.fillRect(-12, -6, 6, 8); ctx.fillRect(6, -6, 6, 8);
+    } else if (bt === 'ghost') {
+      ctx.fillStyle = C('#d9d3ec'); ctx.beginPath(); ctx.arc(0, -4, 28, Math.PI, 0);
+      ctx.lineTo(28, 26); for (k = 0; k < 4; k++) ctx.lineTo(28 - (k + 0.5) * 14, 18 + (k % 2 ? 0 : 8) + Math.sin(t * 6 + k) * 3);
+      ctx.lineTo(-28, 26); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = charge ? '#d94b6a' : '#3a2f66'; ctx.beginPath(); ctx.ellipse(-10, -6, 5, 8, 0, 0, 7); ctx.ellipse(10, -6, 5, 8, 0, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0, 12, 6, 5 + Math.sin(t * 5) * 2, 0, 0, 7); ctx.fill();
+    } else if (bt === 'pumpkin') {
+      ctx.fillStyle = C('#d9822b'); ctx.beginPath(); ctx.ellipse(0, 2, 32, 26, 0, 0, 7); ctx.fill();
+      ctx.strokeStyle = C('#a85c1a'); ctx.lineWidth = 3;
+      [-14, 0, 14].forEach(function (x) { ctx.beginPath(); ctx.ellipse(x, 2, 10, 26, 0, 0, 7); ctx.stroke(); });
+      ctx.fillStyle = C('#4f7a3a'); ctx.fillRect(-4, -34, 8, 12);
+      ctx.fillStyle = eye; ctx.beginPath(); ctx.moveTo(-18, -4); ctx.lineTo(-8, -4); ctx.lineTo(-13, -14); ctx.closePath(); ctx.moveTo(8, -4); ctx.lineTo(18, -4); ctx.lineTo(13, -14); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-16, 10); for (k = 0; k < 5; k++) ctx.lineTo(-16 + k * 8 + 4, k % 2 ? 10 : 18); ctx.lineTo(16, 10); ctx.closePath(); ctx.fill();
+    } else if (bt === 'frost') {
+      ctx.fillStyle = C('#9fd6ee'); ctx.strokeStyle = C('#e9fbff'); ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(0, -32); ctx.lineTo(24, -8); ctx.lineTo(16, 24); ctx.lineTo(-16, 24); ctx.lineTo(-24, -8); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = C('#c6ecfa'); [[-30, -20], [30, -20], [0, -42]].forEach(function (s) { ctx.beginPath(); ctx.moveTo(s[0] * 0.55, s[1] * 0.35); ctx.lineTo(s[0], s[1]); ctx.lineTo(s[0] * 0.7, s[1] * 0.1 + 8); ctx.closePath(); ctx.fill(); });
+      ctx.fillStyle = '#e9fbff'; ctx.beginPath(); ctx.moveTo(-12, -30); ctx.lineTo(-6, -40); ctx.lineTo(0, -30); ctx.lineTo(6, -40); ctx.lineTo(12, -30); ctx.lineTo(12, -24); ctx.lineTo(-12, -24); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = charge ? '#ff6b7a' : '#2b5f86'; ctx.fillRect(-12, -6, 7, 8); ctx.fillRect(5, -6, 7, 8);
+    } else if (bt === 'dragon') {
+      ctx.fillStyle = C('#4f9a6b'); ctx.beginPath(); ctx.ellipse(0, 4, 28, 24, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = C('#3a7a52');
+      var fl = Math.sin(t * 8) * 6;
+      ctx.beginPath(); ctx.moveTo(-24, -4); ctx.lineTo(-48, -22 + fl); ctx.lineTo(-40, 6); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(24, -4); ctx.lineTo(48, -22 + fl); ctx.lineTo(40, 6); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = C('#e9d9a8'); ctx.beginPath(); ctx.moveTo(-14, -18); ctx.lineTo(-18, -34); ctx.lineTo(-6, -22); ctx.closePath(); ctx.moveTo(14, -18); ctx.lineTo(18, -34); ctx.lineTo(6, -22); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = C('#6fb88a'); ctx.beginPath(); ctx.ellipse(0, 14, 16, 11, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = '#2d4f3a'; ctx.fillRect(-7, 12, 3, 4); ctx.fillRect(4, 12, 3, 4);
+      ctx.fillStyle = charge ? '#ff7a3a' : '#ffe08a'; ctx.beginPath(); ctx.arc(-11, -6, 5, 0, 7); ctx.arc(11, -6, 5, 0, 7); ctx.fill();
+      if (charge) { ctx.fillStyle = 'rgba(255,140,60,0.8)'; ctx.beginPath(); ctx.moveTo(-8, 22); ctx.lineTo(0, 40); ctx.lineTo(8, 22); ctx.closePath(); ctx.fill(); }
+    } else if (bt === 'octo') {
+      ctx.fillStyle = C('#8a5fb8'); ctx.beginPath(); ctx.arc(0, -4, 28, Math.PI, 0); ctx.lineTo(28, 8); ctx.lineTo(-28, 8); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = C('#8a5fb8'); ctx.lineWidth = 7; ctx.lineCap = 'round';
+      for (k = 0; k < 4; k++) { var bx = -21 + k * 14; ctx.beginPath(); ctx.moveTo(bx, 6); ctx.quadraticCurveTo(bx + Math.sin(t * 4 + k) * 9, 18, bx + Math.sin(t * 4 + k + 1) * 8, 30); ctx.stroke(); }
+      ctx.fillStyle = '#f3e9fb'; ctx.beginPath(); ctx.arc(-10, -6, 7, 0, 7); ctx.arc(10, -6, 7, 0, 7); ctx.fill();
+      ctx.fillStyle = charge ? '#d94b6a' : '#2f2150'; ctx.beginPath(); ctx.arc(-10, -5, 3.5, 0, 7); ctx.arc(10, -5, 3.5, 0, 7); ctx.fill();
+      ctx.fillStyle = C('#a885d0'); ctx.beginPath(); ctx.arc(-14, -22, 3, 0, 7); ctx.arc(2, -26, 4, 0, 7); ctx.arc(16, -20, 3, 0, 7); ctx.fill();
+    } else if (bt === 'bat') {
+      var fw = Math.sin(t * 14) * 14;
+      ctx.fillStyle = C('#3b3556');
+      ctx.beginPath(); ctx.moveTo(-8, -4); ctx.lineTo(-52, -18 - fw); ctx.lineTo(-40, -2); ctx.lineTo(-34, 8); ctx.lineTo(-24, 2); ctx.lineTo(-14, 12); ctx.closePath(); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(8, -4); ctx.lineTo(52, -18 - fw); ctx.lineTo(40, -2); ctx.lineTo(34, 8); ctx.lineTo(24, 2); ctx.lineTo(14, 12); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = C('#4d4672'); ctx.beginPath(); ctx.ellipse(0, 4, 16, 20, 0, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.moveTo(-14, -14); ctx.lineTo(-10, -30); ctx.lineTo(-3, -16); ctx.closePath(); ctx.moveTo(14, -14); ctx.lineTo(10, -30); ctx.lineTo(3, -16); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = charge ? '#ff6b7a' : '#ffd36b'; ctx.beginPath(); ctx.arc(-6, -2, 3.5, 0, 7); ctx.arc(6, -2, 3.5, 0, 7); ctx.fill();
+      ctx.fillStyle = '#fff4ee'; ctx.beginPath(); ctx.moveTo(-5, 8); ctx.lineTo(-3, 15); ctx.lineTo(-1, 8); ctx.moveTo(1, 8); ctx.lineTo(3, 15); ctx.lineTo(5, 8); ctx.fill();
+    }
+  }
+  function drawBoss() {
+    var g = bossGeom();
+    ctx.save();
+    ctx.translate(wave.x, g.y + Math.sin(wave.t * 3) * 4 * g.s);
+    ctx.scale(g.s, g.s);
+    if (wave.bt === 'ghost') ctx.globalAlpha = 0.55 + 0.4 * Math.sin(wave.t * 4);
+    bossBody(wave.bt, wave.hurt > 0, wave.tele > 0, wave.t);
+    ctx.restore();
+    var bw = Math.min(150, W * 0.5), bx = (W - bw) / 2, by = g.y + 36 * g.s + 10;
+    ctx.fillStyle = 'rgba(20,15,46,0.6)'; ctx.fillRect(bx - 2, by - 2, bw + 4, 10);
+    var gr = ctx.createLinearGradient(bx, 0, bx + bw, 0);
+    gr.addColorStop(0, '#ff7a8a'); gr.addColorStop(1, '#ffc9a8');
+    ctx.fillStyle = gr; ctx.fillRect(bx, by, bw * (wave.hp / wave.max), 6);
+  }
+  function drawRock(r) {
+    ctx.strokeStyle = 'rgba(255,201,168,0.35)'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(r.x, r.y); ctx.lineTo(r.x - r.vx * 0.06, r.y - r.vy * 0.06); ctx.stroke();
+    ctx.save(); ctx.translate(r.x, r.y); ctx.rotate(r.rot);
+    ctx.fillStyle = 'hsl(22 22% 38%)'; ctx.strokeStyle = 'hsl(22 30% 60%)'; ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (var k = 0; k < 6; k++) { var a = k * Math.PI / 3, rad = r.s * (0.5 + 0.12 * ((k * 7) % 3)); ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad); }
+    ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+  }
+  function drawOrb(my) {
+    var col = orb.k === 'shield' ? 'hsl(190 90% 66%)' : orb.k === 'slow' ? 'hsl(150 70% 60%)' : 'hsl(8 90% 68%)';
+    var y = my - 22 + Math.sin(bt * 3) * 3;
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(orb.x, y, 11, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = '#140f2e'; ctx.font = '700 12px Manrope, system-ui, sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText(orb.k === 'shield' ? 'Щ' : orb.k === 'slow' ? 'З' : 'М', orb.x, y + 4);
+  }
+  function drawOppPanel() {
+    var o = duel.opp, pw = 74, ph = 150, px = W - pw - 4, py = 84;
+    ctx.fillStyle = 'rgba(20,15,46,0.55)'; ctx.fillRect(px, py, pw, ph);
+    ctx.fillStyle = '#fff4ee'; ctx.textAlign = 'center';
+    ctx.font = '700 10px Manrope, system-ui, sans-serif';
+    ctx.fillText(o.name || 'Соперник', px + pw / 2, py + 13);
+    ctx.font = '700 15px Unbounded, system-ui, sans-serif';
+    ctx.fillText(String(o.pts), px + pw / 2, py + 33);
+    var list = o.blocks.slice(-22), by = py + ph - 8;
+    list.forEach(function (b, i) {
+      var c = skin.style(o.blocks.length - list.length + i + 1);
+      ctx.fillStyle = c.f;
+      ctx.fillRect(px + pw / 2 + (b.x - 0.5) * (pw - 10) - b.w * (pw - 10) / 2 + 0, by - (i + 1) * 5.2, b.w * (pw - 10), 4.4);
+    });
+    if (o.done) { ctx.fillStyle = 'rgba(255,122,138,0.9)'; ctx.font = '700 10px Manrope, system-ui, sans-serif'; ctx.fillText('упал', px + pw / 2, py + ph - 10 - Math.min(list.length, 22) * 5.2 - 6); }
+  }
+
+  /* ================= frame loop ================= */
+  var frameN = 0;
+  function frame(ts) {
+    if (typeof G !== 'undefined' && G.on) { lastT = ts; requestAnimationFrame(frame); return; }
+    if (state === 'ready' && !duel && (frameN++ & 1)) { requestAnimationFrame(frame); return; }
+    var dt = Math.min(0.05, (ts - (lastT || ts)) / 1000);
+    if (paused) dt = 0;
+    lastT = ts; bt += dt;
+    skin = findSkin(prog.skin) || SKINS[0];
+    var wordView = duel && duel.type === 'word' && state !== 'ready';
+    var target = wordView ? 262 + (duel.w ? duel.w.round * 12 : 0) : 262 + floorsNow() * 4;
+    bgH += (target - bgH) * Math.min(1, dt * 1.8);
+    applySky();
+    ctx.clearRect(0, 0, W, H);
+    drawBackdrop(curTheme());
+    if (wordView) {
+      wordTick(dt);
+      drawWordArena();
+      requestAnimationFrame(frame);
+      return;
+    }
+
+    var d = diffNow();
+    var my = topY(blocks.length);
+    if (state === 'play') updateWave(dt, d, my);
+    if (state === 'play' && timeLeft > 0) {
+      timeLeft -= dt;
+      if (timeLeft <= 0) { timeLeft = 0; timeUp(); }
+      if (Math.ceil(timeLeft) !== lastSec) { lastSec = Math.ceil(timeLeft); setHud(); }
+    }
+    if (duel && (state === 'play' || state === 'wait')) duelTick(dt);
+
+    if (state === 'play') {
+      var sp = speedNow(d) * (W / 360);
+      if (wave && wave.kind === 'wind') sp *= 1 + 0.5 * Math.sin(wave.t * 2.4);
+      if (kick > 0) { sp *= 1.9; kick = Math.max(0, kick - dt); }
+      mx += dir * sp * dt;
+      var maxX = Math.max(0, W - mw);
+      if (mx > maxX) { mx = maxX; dir = -1; }
+      if (mx < 0) { mx = 0; dir = 1; }
+    }
+    var camTarget = Math.max(0, (blocks.length - 7) * bh);
+    camY += (camTarget - camY) * Math.min(1, dt * 6);
+
+    var i;
+    for (i = rocks.length - 1; i >= 0; i--) {
+      var r = rocks[i];
+      r.x += r.vx * dt; r.y += r.vy * dt; r.rot += dt * 4;
+      if (state === 'play' && hitRect(r.x - r.s / 2, r.y - r.s / 2, r.s, r.s, mx, my, mw, bh)) { chip(my); rocks.splice(i, 1); continue; }
+      if (r.y > H + 30) rocks.splice(i, 1);
+    }
+    for (i = birds.length - 1; i >= 0; i--) {
+      var b = birds[i];
+      b.x += b.vx * dt;
+      if (state === 'play' && hitRect(b.x - 14, my + b.yo - 6, 28, 12, mx, my, mw, bh)) {
+        dir = b.vx > 0 ? 1 : -1; kick = 0.6;
+        beep(320, 0.12, 'square', 0.06); buzz(20);
+        birds.splice(i, 1); continue;
+      }
+      if (b.x < -60 || b.x > W + 60) birds.splice(i, 1);
+    }
+    for (i = debris.length - 1; i >= 0; i--) {
+      var d2 = debris[i];
+      d2.vy += 1800 * dt; d2.y += d2.vy * dt; d2.x += d2.vx * dt;
+      d2.a = Math.max(0, 1 - d2.vy / 1400);
+      if (d2.y > H + 60 || d2.a <= 0) debris.splice(i, 1);
+    }
+    for (var j = fx.length - 1; j >= 0; j--) { fx[j].t += dt * 3; if (fx[j].t >= 1) fx.splice(j, 1); }
+    for (var k = pops.length - 1; k >= 0; k--) { pops[k].t += dt * 1.4; if (pops[k].t >= 1) pops.splice(k, 1); }
+
+    var windy = wave && state === 'play' && wave.kind === 'wind';
+    if (windy) {
+      ctx.strokeStyle = 'rgba(255,244,238,0.22)'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+      for (var w2 = 0; w2 < 8; w2++) {
+        var wx = ((bt * 280 + w2 * 97) % (W + 160)) - 80, wy = H * 0.12 + w2 * (H * 0.1);
+        ctx.beginPath(); ctx.moveTo(wx, wy); ctx.lineTo(wx + 52, wy); ctx.stroke();
+      }
+    }
+    for (var bi = 0; bi < blocks.length; bi++) {
+      var y = topY(bi);
+      if (y > H || y < -bh) continue;
+      drawBlock(blocks[bi].x, y, blocks[bi].w, bi);
+    }
+    var vis = 1;
+    if (state === 'play') {
+      if (wave && wave.kind === 'fog') vis = Math.min(vis, 0.15 + 0.85 * (0.5 + 0.5 * Math.cos(wave.t * 2.0)));
+      if (wave && wave.kind === 'boss' && wave.bt === 'ghost') vis = Math.min(vis, 0.1 + 0.9 * (0.5 + 0.5 * Math.cos(wave.t * 5)));
+      if (mode === 'night' && !duel) vis = Math.min(vis, 0.55 + 0.45 * Math.abs(Math.sin(bt * 1.3)));
+      drawBlock(mx, my, mw, blocks.length, vis);
+      if (orb) drawOrb(my);
+    }
+    if (wave && state === 'play' && wave.kind === 'boss') drawBoss();
+    rocks.forEach(drawRock);
+    ctx.lineCap = 'round';
+    birds.forEach(function (bd) {
+      var yy = my + bd.yo, f = Math.sin(bt * 14 + bd.ph) * 5;
+      ctx.strokeStyle = 'rgba(255,244,238,0.92)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(bd.x - 14, yy + f); ctx.quadraticCurveTo(bd.x - 6, yy - 7, bd.x, yy); ctx.quadraticCurveTo(bd.x + 6, yy - 7, bd.x + 14, yy + f); ctx.stroke();
+    });
+    if (wave && state === 'play' && wave.kind === 'fog') {
+      ctx.fillStyle = 'rgba(255,244,238,0.17)';
+      for (var p = 0; p < 4; p++) {
+        var fx0 = ((bt * 40 + p * (W / 3)) % (W + 240)) - 120;
+        ctx.beginPath(); ctx.ellipse(fx0, my + bh / 2 + Math.sin(p * 2) * 18, 72, 26, 0, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    debris.forEach(function (dd) { drawBlock(dd.x, dd.y, dd.w, dd.i, dd.a); });
+    fx.forEach(function (f) {
+      var g = f.t * 14;
+      ctx.strokeStyle = 'rgba(255,244,238,' + (1 - f.t) + ')'; ctx.lineWidth = 2;
+      ctx.strokeRect(f.x - g, f.y - g * 0.6, f.w + g * 2, bh - 1 + g * 1.2);
+    });
+    ctx.textAlign = 'center';
+    ctx.font = '700 15px Unbounded, system-ui, sans-serif';
+    pops.forEach(function (pp) {
+      ctx.fillStyle = 'rgba(255,244,238,' + (1 - pp.t) + ')';
+      ctx.fillText(pp.s, W / 2, pp.y - pp.t * 36);
+    });
+    if (duel && duel.type === 'tower') drawOppPanel();
+    requestAnimationFrame(frame);
+  }
+
+  /* ================= duels: shared ================= */
+  var net = { room: null, code: '', host: false, peer: null, oppBy: null, unsubs: [], active: false, type: 'tower', status: '' };
+  function netEmit(t, d) { if (net.room) { try { net.room.emit(t, d || {}).catch(function () {}); } catch (e) {} } }
+  function netLeave() {
+    net.unsubs.forEach(function (u) { try { u(); } catch (e) {} });
+    net.unsubs = [];
+    if (net.room) { try { net.room.emit('bye', {}).catch(function () {}); net.room.leave().catch(function () {}); } catch (e) {} }
+    net.room = null; net.active = false; net.peer = null; net.oppBy = null; net.code = ''; net.status = '';
+  }
+  function pickWords(n) {
+    var a = WORDS.slice();
+    for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t; }
+    return a.slice(0, n);
+  }
+  function oppSkin() { return prog.skin === 'mint' ? SKINS[0] : SKINS[1]; }
+
+  function startDuel(cfg) {
+    closeSheet(); audio();
+    contOv.hidden = true; overOv.hidden = true; startOv.hidden = true;
+    duel = {
+      type: cfg.type, kind: cfg.kind, bot: cfg.bot || 'mid', cfg: cfg, words: cfg.words || null, over: false, meFin: false, botT: 1.4,
+      opp: { name: cfg.kind === 'bot' ? 'Бот · ' + BOTS[cfg.bot || 'mid'].name : (cfg.name || 'Соперник'), pts: 0, blocks: [], done: false, fin: false, bw: 1, combo: 0 }
+    };
+    rW = Math.random; rO = Math.random;
+    effects = { shield: 0, slow: 0, magnet: 0 }; contUsed = true; contPending = false;
+    if (duel.type === 'tower') {
+      reset();
+      timeLeft = 60;
+      state = 'play';
+      scoreEl.style.visibility = '';
+      updateMenuUI();
+      toast('Дуэль башен: 60 секунд. Побеждает тот, у кого больше очков', 3000);
+      musicKick();
+    } else {
+      startWord();
+    }
+  }
+
+  function duelPlaced() {
+    var nb = blocks[blocks.length - 1];
+    if (duel.kind === 'human') netEmit('tw', { p: points, f: floorsNow(), x: +((nb.x + nb.w / 2) / W).toFixed(3), w: +(nb.w / baseW).toFixed(3) });
+  }
+  function botStep() {
+    var c = BOTS[duel.bot], o = duel.opp, bw = o.bw, r = Math.random();
+    if (r < c.fall) { o.done = true; return; }
+    if (r < c.fall + c.perf) { o.combo++; o.pts += 2; if (o.combo >= 3) bw = Math.min(1, bw + 0.04); }
+    else {
+      bw -= Math.random() * c.off * bw; o.combo = 0; o.pts += 1;
+      if (bw < 0.08) { o.done = true; return; }
+    }
+    o.bw = bw;
+    o.blocks.push({ x: 0.5 + (Math.random() - 0.5) * 0.12, w: bw });
+    if (o.blocks.length > 40) o.blocks.shift();
+  }
+  function duelTick(dt) {
+    if (!duel || duel.type !== 'tower' || duel.over) return;
+    var o = duel.opp;
+    if (duel.kind === 'bot' && !o.done && state === 'play') {
+      duel.botT -= dt;
+      if (duel.botT <= 0) { botStep(); duel.botT = BOTS[duel.bot].int * (0.8 + Math.random() * 0.4); }
+    }
+    if (state === 'wait') {
+      timeLeft -= dt;
+      if (o.fin || timeLeft <= -3) resolveTower();
+    }
+  }
+  function duelMeFell(timedOut) {
+    if (!duel || duel.over) return;
+    duel.meFin = true;
+    if (duel.kind === 'bot') {
+      var o = duel.opp, left = timedOut ? 0 : Math.max(0, timeLeft), t = 0;
+      while (!o.done && t < left) { botStep(); t += BOTS[duel.bot].int; }
+      resolveTower();
+      return;
+    }
+    netEmit('fin', { p: points });
+    if (duel.opp.fin) { resolveTower(); return; }
+    state = 'wait';
+    toast('Ждём, пока соперник закончит…', 3000);
+  }
+  function resolveTower() {
+    if (!duel || duel.over) return;
+    duel.over = true; state = 'over';
+    var me = points, op = duel.opp.pts;
+    finishDuel(me > op ? 'win' : me < op ? 'lose' : 'draw', me, op, 'Очки', 'Соперник', '');
+  }
+  function finishDuel(res, a, b, la, lb, note) {
+    var s = prog.stats, reward;
+    s.duels++;
+    if (res === 'win') {
+      s.duelWins++; if (duel.type === 'word') s.wordWins++;
+      reward = duel.kind === 'human' ? 25 : ({ easy: 6, mid: 12, hard: 20 })[duel.bot];
+      qEvent('duel', 1); beep(523, 0.2); beep(784, 0.3);
+    } else if (res === 'draw') reward = 3;
+    else reward = 2;
+    prog.coins += reward;
+    qEvent('games', 1);
+    checkAch({ floors: floorsNow(), points: points, mode: 'duel', diff: 'normal' });
+    saveProg(true); renderCoins();
+    showOver(res === 'win' ? 'Победа' : res === 'lose' ? 'Поражение' : 'Ничья', a, la, b, lb, '+' + reward, note || '');
+    $('againBtn').hidden = duel.kind === 'human';
+    if (duel.kind === 'human') netEmit('fin', { p: points });
+  }
+  function oppLeft() {
+    if (!duel || duel.over || duel.kind !== 'human') return;
+    duel.over = true; state = 'over'; wordBox.hidden = true;
+    toast('Соперник вышел из комнаты', 3000);
+    finishDuel('win', duel.type === 'word' ? Math.round(duel.w.meW * 100) + '%' : points, duel.type === 'word' ? Math.round(duel.w.opW * 100) + '%' : duel.opp.pts, duel.type === 'word' ? 'Твой блок' : 'Очки', 'Соперник', 'Соперник вышел, победа засчитана.');
+  }
+
+  /* ================= word duel ================= */
+  function startWord() {
+    var w = { round: 0, rounds: 8, words: duel.words || pickWords(8), meW: 1, opW: 1, me: [], op: [], phase: 'count', pt: 1.1, t0: 0, myT: null, opT: null, botS: 0, rw: { me: 0, op: 0 }, resolved: false, grace: 0, word: '', popT: 0, popTxt: '', popWho: '' };
+    duel.w = w;
+    state = 'word'; points = 0;
+    wordBox.hidden = false; scoreEl.style.visibility = 'hidden'; tempoEl.textContent = ''; hintEl.hidden = true; timerEl.hidden = true; fxEl.textContent = '';
+    wordInput.disabled = false;
+    toast('Дуэль слов: кто быстрее напишет слово, тот не теряет ширину блока', 3200);
+    nextRound();
+    musicKick();
+    try { wordInput.focus(); } catch (e) {}
+  }
+  function showWord(prefix) {
+    var w = duel.w;
+    while (wordText.firstChild) wordText.removeChild(wordText.firstChild);
+    var ok = el('span', 'ok', prefix), rest = document.createTextNode(w.word.slice(prefix.length));
+    wordText.appendChild(ok); wordText.appendChild(rest);
+  }
+  function nextRound() {
+    var w = duel.w;
+    if (w.round >= w.rounds || w.meW < 0.3 || w.opW < 0.3) { endWord(); return; }
+    w.round++; w.phase = 'count'; w.pt = 1.2; w.myT = null; w.opT = null; w.resolved = false;
+    if (w.grace) { clearTimeout(w.grace); w.grace = 0; }
+    w.word = w.words[w.round - 1];
+    wordRound.textContent = 'Раунд ' + w.round + ' из ' + w.rounds;
+    wordText.textContent = 'Приготовься…';
+    wordMsg.textContent = '';
+    wordInput.value = ''; wordInput.disabled = true; wordInput.classList.remove('bad');
+  }
+  function wordTick(dt) {
+    var w = duel && duel.w;
+    if (!w || state !== 'word') return;
+    if (w.phase === 'count') {
+      w.pt -= dt;
+      if (w.pt <= 0) {
+        w.phase = 'type'; w.t0 = performance.now();
+        w.botS = duel.kind === 'bot' ? (BOTS[duel.bot].react + w.word.length * BOTS[duel.bot].cpc) * (0.85 + Math.random() * 0.3) : 0;
+        showWord('');
+        wordInput.disabled = false;
+        try { wordInput.focus(); } catch (e) {}
+      }
+    } else if (w.phase === 'type') {
+      var elapsed = (performance.now() - w.t0) / 1000;
+      if (duel.kind === 'bot') {
+        if (!w.resolved && w.opT == null && elapsed >= w.botS) { w.opT = Math.round(w.botS * 1000); applyWord('op'); }
+        else if (!w.resolved && elapsed >= 15) applyWord(null);
+      } else if (!w.resolved) {
+        if (net.host && elapsed >= 15) hostResolve(w.myT != null ? 'h' : w.opT != null ? 'g' : 'n');
+        else if (!net.host && elapsed >= 22) { w.resolved = true; applyWord(null); }
+      }
+    } else if (w.phase === 'result') {
+      w.pt -= dt; w.popT += dt;
+      if (w.pt <= 0) nextRound();
+    }
+  }
+  function onWordInput() {
+    var w = duel && duel.w;
+    if (!w || w.phase !== 'type' || w.myT != null) return;
+    var v = wordInput.value.trim().toLowerCase();
+    var ok = w.word.indexOf(v) === 0;
+    wordInput.classList.toggle('bad', !ok);
+    showWord(ok ? v : '');
+    if (v === w.word) {
+      w.myT = Math.round(performance.now() - w.t0);
+      wordInput.disabled = true;
+      wordMsg.textContent = 'Готово: ' + (w.myT / 1000).toFixed(2).replace('.', ',') + ' с';
+      if (duel.kind === 'bot') { if (!w.resolved) applyWord('me'); }
+      else { netEmit('dn', { r: w.round, t: w.myT }); hostCheck(); }
+    }
+  }
+  function hostCheck() {
+    var w = duel && duel.w;
+    if (!w || !net.host || w.resolved || w.phase !== 'type') return;
+    if (w.myT != null && w.opT != null) hostResolve(w.myT <= w.opT ? 'h' : 'g');
+    else if (w.myT != null && !w.grace) {
+      w.grace = setTimeout(function () { w.grace = 0; if (!w.resolved && w.opT == null && w.phase === 'type') hostResolve('h'); }, 1200);
+    }
+  }
+  function hostResolve(win) {
+    var w = duel.w;
+    if (w.resolved) return;
+    w.resolved = true;
+    netEmit('wres', { r: w.round, win: win });
+    applyWord(win === 'h' ? 'me' : win === 'g' ? 'op' : null);
+  }
+  function applyWord(who) {
+    var w = duel.w;
+    w.resolved = true; w.phase = 'result'; w.pt = 1.8; w.popT = 0;
+    wordInput.disabled = true;
+    if (who === 'me') {
+      var c = 0.12 + (w.opT == null ? 0.06 : 0);
+      w.opW = Math.max(0.05, w.opW - c); w.rw.me++; w.popTxt = '−' + Math.round(c * 100) + '%'; w.popWho = 'op';
+      wordMsg.textContent = 'Ты быстрее. Блок соперника стал уже'; beep(659, 0.15);
+    } else if (who === 'op') {
+      var c2 = 0.12 + (w.myT == null ? 0.06 : 0);
+      w.meW = Math.max(0.05, w.meW - c2); w.rw.op++; w.popTxt = '−' + Math.round(c2 * 100) + '%'; w.popWho = 'me';
+      wordMsg.textContent = 'Соперник быстрее. Твой блок стал уже'; beep(160, 0.25, 'sawtooth', 0.08);
+    } else {
+      w.meW = Math.max(0.05, w.meW - 0.12); w.opW = Math.max(0.05, w.opW - 0.12);
+      w.popTxt = '−12%'; w.popWho = 'both';
+      wordMsg.textContent = 'Время вышло. Оба блока уже'; beep(200, 0.2);
+    }
+    w.me.push(w.meW); w.op.push(w.opW);
+    wordText.textContent = w.word;
+  }
+  function endWord() {
+    var w = duel.w;
+    duel.over = true; state = 'over'; wordBox.hidden = true;
+    var a = Math.round(w.meW * 100), b = Math.round(w.opW * 100);
+    var res = a > b ? 'win' : a < b ? 'lose' : (w.rw.me > w.rw.op ? 'win' : w.rw.me < w.rw.op ? 'lose' : 'draw');
+    finishDuel(res, a + '%', b + '%', 'Твой блок', 'Блок соперника', 'Раундов выиграно: ' + w.rw.me + ' : ' + w.rw.op + '.');
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+  }
+  function drawWordArena() {
+    var w = duel.w;
+    if (!w) return;
+    var top = 292, bottom = H - 14;
+    var hB = Math.max(14, Math.min(26, (bottom - top - 34) / 9));
+    var colW = Math.min(W * 0.4, 150);
+    var cols = [
+      { cx: W * 0.27, list: w.me, wf: w.meW, name: 'Ты', sk: skin, who: 'me' },
+      { cx: W * 0.73, list: w.op, wf: w.opW, name: (duel.opp.name || 'Соперник').slice(0, 14), sk: oppSkin(), who: 'op' }
+    ];
+    ctx.textAlign = 'center';
+    cols.forEach(function (c) {
+      ctx.fillStyle = 'rgba(255,244,238,0.25)'; ctx.fillRect(c.cx - colW / 2 - 6, bottom, colW + 12, 3);
+      var maxN = Math.max(1, Math.floor((bottom - top - 34) / hB));
+      var list = c.list.slice(-maxN), keep = skin;
+      skin = c.sk;
+      list.forEach(function (f, i) { drawBlock(c.cx - f * colW / 2, bottom - (i + 1) * hB, f * colW, c.list.length - list.length + i, 1, hB); });
+      skin = keep;
+      ctx.fillStyle = '#fff4ee'; ctx.font = '700 12px Manrope, system-ui, sans-serif';
+      ctx.fillText(c.name + ' · ' + Math.round(c.wf * 100) + '%', c.cx, top + 12);
+      if (w.phase === 'result' && (w.popWho === c.who || w.popWho === 'both')) {
+        ctx.globalAlpha = Math.max(0, 1 - w.popT / 1.6);
+        ctx.fillStyle = '#ff7a8a'; ctx.font = '700 20px Unbounded, system-ui, sans-serif';
+        ctx.fillText(w.popTxt, c.cx, top + 44 - Math.min(w.popT, 1.6) * 14);
+        ctx.globalAlpha = 1;
+      }
+    });
+  }
+
+  /* ================= rooms (two players) ================= */
+  function profileName(by, cb) {
+    if (!userNs || !by) { cb('Соперник'); return; }
+    userNs.profiles([by]).then(function (ps) { cb((ps[by] && ps[by].name) || 'Соперник'); }).catch(function () { cb('Соперник'); });
+  }
+  function netJoin(code, host, type) {
+    if (!roomNs) return Promise.reject({ code: 'unavailable' });
+    return roomNs.join('stopka-duel-' + code).then(function (room) { return netAttach(room, code, host, type); });
+  }
+  function netAttach(room, code, host, type) {
+    {
+      net.room = room; net.code = code; net.host = host; net.type = type; net.active = false; net.peer = null; net.oppBy = null;
+      net.unsubs.push(room.on('hello', function (m) {
+        if (m.isMe || !net.host || net.active || net.room !== room) return;
+        net.active = true; net.peer = m.peer; net.oppBy = m.by;
+        var words = net.type === 'word' ? pickWords(8) : null;
+        netEmit('start', { type: net.type, words: words });
+        profileName(m.by, function (nm) { startDuel({ type: net.type, kind: 'human', words: words, name: nm }); });
+      }));
+      net.unsubs.push(room.on('start', function (m) {
+        if (m.isMe || net.host || net.active || net.room !== room || !m.data) return;
+        var t = m.data.type === 'word' ? 'word' : 'tower';
+        net.active = true; net.peer = m.peer; net.oppBy = m.by;
+        var words = Array.isArray(m.data.words) ? m.data.words.filter(function (x) { return typeof x === 'string' && x.length < 24; }).slice(0, 8) : null;
+        if (t === 'word' && (!words || words.length < 8)) words = pickWords(8);
+        profileName(m.by, function (nm) { startDuel({ type: t, kind: 'human', words: words, name: nm }); });
+      }));
+      net.unsubs.push(room.on('tw', function (m) {
+        if (m.isMe || !duel || duel.type !== 'tower' || m.peer !== net.peer || !m.data) return;
+        var o = duel.opp;
+        o.pts = Math.max(0, Math.min(9999, +m.data.p || 0));
+        o.blocks.push({ x: Math.max(0, Math.min(1, +m.data.x || 0.5)), w: Math.max(0.05, Math.min(1.2, +m.data.w || 0.5)) });
+        if (o.blocks.length > 40) o.blocks.shift();
+      }));
+      net.unsubs.push(room.on('fin', function (m) {
+        if (m.isMe || !duel || m.peer !== net.peer || !m.data || duel.type !== 'tower') return;
+        duel.opp.fin = true; duel.opp.pts = Math.max(0, Math.min(9999, +m.data.p || duel.opp.pts));
+        if (duel.meFin) resolveTower();
+      }));
+      net.unsubs.push(room.on('dn', function (m) {
+        if (m.isMe || !duel || !duel.w || m.peer !== net.peer || !m.data) return;
+        if (+m.data.r === duel.w.round && duel.w.opT == null) { duel.w.opT = Math.max(0, +m.data.t || 0); hostCheck(); }
+      }));
+      net.unsubs.push(room.on('wres', function (m) {
+        if (m.isMe || net.host || !duel || !duel.w || m.peer !== net.peer || !m.data) return;
+        var w = duel.w;
+        if (+m.data.r !== w.round || w.resolved) return;
+        applyWord(m.data.win === 'h' ? 'op' : m.data.win === 'g' ? 'me' : null);
+      }));
+      net.unsubs.push(room.on('bye', function (m) { if (!m.isMe && net.peer && m.peer === net.peer) oppLeft(); }));
+      net.unsubs.push(room.onPeers(function (ch) {
+        if (net.peer && ch.left.some(function (p) { return p.peer === net.peer; })) oppLeft();
+      }));
+      return room;
+    }
+  }
+  function netError(e) {
+    var c = e && e.code;
+    if (c === 'not_permitted') return 'Комнаты недоступны на твоём уровне доступа. Нужен доступ «Участник» или выше.';
+    if (c === 'unavailable') return 'Игра по комнате доступна, когда страница открыта в аккаунте Claude.';
+    return 'Не удалось подключиться. Попробуй ещё раз.';
+  }
+  function createRoom(type) {
+    netLeave();
+    var code = String(1000 + Math.floor(Math.random() * 9000));
+    net.status = 'Создаю комнату…'; renderDuel();
+    netJoin(code, true, type).then(function () {
+      net.status = 'wait'; renderDuel();
+    }).catch(function (e) { net.status = netError(e); net.room = null; renderDuel(); });
+  }
+  function joinRoom(code, type) {
+    netLeave();
+    if (!/^[0-9]{4}$/.test(code)) { net.status = 'Введи код из четырёх цифр.'; renderDuel(); return; }
+    net.status = 'Подключаюсь…'; renderDuel();
+    netJoin(code, false, type).then(function (room) {
+      netEmit('hello', {});
+      setTimeout(function () {
+        if (net.room === room && !net.active) { net.status = 'Хозяин комнаты не отвечает. Проверь код.'; renderDuel(); }
+      }, 9000);
+    }).catch(function (e) { net.status = netError(e); net.room = null; renderDuel(); });
+  }
+
+  /* ================= sheets ================= */
+  function clearBody() { while (sheetBody.firstChild) sheetBody.removeChild(sheetBody.firstChild); }
+  function addNote(text) { sheetBody.appendChild(el('p', 'note', text)); }
+  function addSec(text) { sheetBody.appendChild(el('div', 'sec-h', text)); }
+  function subRow(items, cur, cb, label) {
+    var row = el('div', 'sub');
+    row.setAttribute('role', 'group'); if (label) row.setAttribute('aria-label', label);
+    items.forEach(function (it) {
+      var b = el('button', '', it[1]);
+      b.type = 'button'; b.setAttribute('aria-pressed', String(it[0] === cur));
+      b.addEventListener('click', function () { cb(it[0]); });
+      row.appendChild(b);
+    });
+    sheetBody.appendChild(row);
+  }
+  var TITLES = { lb: 'Лидеры', skins: 'Скины и фоны', quests: 'Задания', ach: 'Успехи', duel: 'Дуэль' };
+  function openSheet(name) {
+    sheetName = name;
+    sheetTitle.textContent = TITLES[name];
+    sheet.hidden = false;
+    sheetBody.scrollTop = 0;
+    renderSheet();
+    renderCoins();
+  }
+  function closeSheet() { sheet.hidden = true; sheetName = ''; lbTok++; }
+  function renderSheet() {
+    if (sheetName === 'lb') renderLb();
+    else if (sheetName === 'skins') renderSkins();
+    else if (sheetName === 'quests') renderQuests();
+    else if (sheetName === 'ach') renderAch();
+    else if (sheetName === 'duel') renderDuel();
+  }
+
+  /* ---- leaderboard ---- */
+  var lbTab = 'all', lbDiff = 'normal';
+  function lbList() {
+    var wk = weekKey(), dk = dayKey();
+    return (lbDocs || []).map(function (r) {
+      var d = r.d, v = 0;
+      if (lbTab === 'all') v = lbDiff === 'hard' ? (+d.bh || 0) : (d.bn != null ? (+d.bn || 0) : (+d.best || 0));
+      else if (lbTab === 'week') v = d.wk === wk ? (lbDiff === 'hard' ? (+d.wh || 0) : (+d.wn || 0)) : 0;
+      else v = d.dk === dk ? (+d.ds || 0) : 0;
+      return { id: r.id, v: v };
+    }).filter(function (r) { return r.v > 0; }).sort(function (a, b) { return b.v - a.v; }).slice(0, 20);
+  }
+  function renderLb() {
+    var tok = ++lbTok;
+    clearBody();
+    subRow([['all', 'Всё время'], ['week', 'Неделя'], ['today', 'Вызов дня']], lbTab, function (v) { lbTab = v; renderLb(); }, 'Период');
+    if (lbTab !== 'today') subRow([['normal', 'Обычная'], ['hard', 'Сложная']], lbDiff, function (v) { lbDiff = v; renderLb(); }, 'Сложность');
+    if (dbState === 'off') {
+      addNote('Таблица лидеров доступна, когда страница открыта в аккаунте Claude. Твой лучший результат на этом устройстве: ' + lbBest() + '.');
+      return;
+    }
+    if (lbError && !lbDocs) { addNote('Не удалось загрузить таблицу. Закрой раздел и открой его снова.'); return; }
+    if (dbState === 'loading' || !lbDocs) { addNote('Загружаю таблицу…'); return; }
+    var rows = lbList();
+    if (!rows.length) {
+      addNote(lbTab === 'today' ? 'Сегодня вызов дня ещё никто не сыграл. Выбери режим «Вызов дня» и стань первым.' : 'Пока в этой таблице никого. Сыграй классику на ' + (lbDiff === 'hard' ? 'сложной' : 'обычной') + ' сложности, и твой рекорд появится здесь.');
+      return;
+    }
+    var pr = userNs ? userNs.profiles(rows.map(function (r) { return r.id; })).catch(function () { return {}; }) : Promise.resolve({});
+    pr.then(function (ps) {
+      if (tok !== lbTok || sheetName !== 'lb') return;
+      renderLbShell();
+      var ol = el('ol', 'lb');
+      rows.forEach(function (r, i) {
+        var li = el('li', r.id === uid ? 'me' : '');
+        li.appendChild(el('span', 'rank', String(i + 1)));
+        var who = el('span', 'who', (ps[r.id] && ps[r.id].name) || 'Игрок');
+        if (r.id === uid) who.appendChild(el('em', '', 'ты'));
+        li.appendChild(who);
+        li.appendChild(el('span', 'pts', String(r.v)));
+        ol.appendChild(li);
+      });
+      sheetBody.appendChild(ol);
+      if (canWrite === false) addNote('У тебя доступ только на просмотр, поэтому твои результаты в таблицу не попадают.');
+      else addNote(lbTab === 'today' ? 'Вызов дня: у всех одни и те же препятствия, одна попытка в день.' : 'Лучший результат каждого игрока за одну партию классики. Лёгкая сложность в зачёт не идёт.');
+    });
+  }
+  function renderLbShell() {
+    clearBody();
+    subRow([['all', 'Всё время'], ['week', 'Неделя'], ['today', 'Вызов дня']], lbTab, function (v) { lbTab = v; renderLb(); }, 'Период');
+    if (lbTab !== 'today') subRow([['normal', 'Обычная'], ['hard', 'Сложная']], lbDiff, function (v) { lbDiff = v; renderLb(); }, 'Сложность');
+  }
+
+  /* ---- skins and backgrounds ---- */
+  function achName(id) { for (var i = 0; i < ACH.length; i++) if (ACH[i].id === id) return ACH[i].name; return ''; }
+  function renderSkins() {
+    clearBody();
+    addSec('Скины блоков');
+    var grid = el('div', 'skins');
+    SKINS.forEach(function (s) {
+      var owned = skinOwned(s), on = prog.skin === s.id;
+      var cell = el('div', 'skin' + (on ? ' on' : ''));
+      var pv = el('div', 'preview');
+      [78, 100, 88, 66].forEach(function (pct, i) {
+        var c = s.style(i + 2), bar = document.createElement('i');
+        bar.style.width = pct + '%'; bar.style.marginLeft = ((100 - pct) / 2) + '%';
+        bar.style.background = c.f; bar.style.borderTop = '3px solid ' + c.t;
+        bar.style.boxShadow = c.s ? 'inset 0 0 0 2px ' + c.s : 'none';
+        pv.appendChild(bar);
+      });
+      cell.appendChild(pv);
+      cell.appendChild(el('div', 'skin-name', s.name));
+      var btn = el('button', 'mini');
+      btn.type = 'button'; btn.id = 'skin-' + s.id;
+      if (on) { btn.textContent = 'Выбрано'; btn.disabled = true; }
+      else if (owned) { btn.textContent = 'Выбрать'; btn.addEventListener('click', function () { prog.skin = s.id; saveProg(true); renderSkins(); }); }
+      else if (s.need) { btn.textContent = 'Закрыто'; btn.disabled = true; cell.appendChild(btn); cell.appendChild(el('small', '', 'Награда: ' + achName(s.need))); grid.appendChild(cell); return; }
+      else {
+        btn.textContent = 'Купить за ' + s.cost;
+        if (prog.coins < s.cost) btn.disabled = true;
+        btn.addEventListener('click', function () {
+          if (prog.coins < s.cost) return;
+          prog.coins -= s.cost; prog.owned.push(s.id); prog.skin = s.id;
+          saveProg(true); renderCoins(); renderSkins();
+        });
+      }
+      cell.appendChild(btn);
+      if (!owned && prog.coins < s.cost) cell.appendChild(el('small', '', 'Не хватает ' + (s.cost - prog.coins)));
+      grid.appendChild(cell);
+    });
+    sheetBody.appendChild(grid);
+    addSec('Фоны');
+    var tg = el('div', 'themes');
+    THEMES.forEach(function (t) {
+      var open = themeOpen(t), on = prog.theme === t.id;
+      var cell = el('div', 'skin' + (on ? ' on' : ''));
+      var sw = el('div', 'swatch');
+      var c = t.id === 'dusk' ? ['hsl(262 46% 11%)', 'hsl(286 50% 22%)', 'hsl(310 56% 36%)'] : SKY[t.id];
+      sw.style.background = 'linear-gradient(180deg,' + c[0] + ',' + c[1] + ' 55%,' + c[2] + ')';
+      cell.appendChild(sw);
+      cell.appendChild(el('div', 'skin-name', t.name));
+      var b = el('button', 'mini');
+      b.type = 'button'; b.id = 'theme-' + t.id;
+      if (on) { b.textContent = 'Выбрано'; b.disabled = true; }
+      else if (open) { b.textContent = 'Выбрать'; b.addEventListener('click', function () { prog.theme = t.id; skyKey = ''; saveProg(true); renderSkins(); }); }
+      else { b.textContent = 'Закрыто'; b.disabled = true; }
+      cell.appendChild(b);
+      if (!open) cell.appendChild(el('small', '', 'Награда: ' + achName(t.need)));
+      tg.appendChild(cell);
+    });
+    sheetBody.appendChild(tg);
+    addNote('Монеты даются за партии (1 за каждые 10 очков), задания, препятствия, боссов и дуэли. В режиме «Ночь» фон всегда ночной.');
+  }
+
+  /* ---- quests ---- */
+  function renderQuests() {
+    clearBody();
+    prog.quests.forEach(function (q, i) {
+      var row = el('div', 'q'), top = el('div', 'q-top');
+      top.appendChild(el('span', 'q-text', TPL[q.k].text(q.goal)));
+      var rew = el('span', 'q-rew');
+      rew.appendChild(el('i', 'gem')); rew.appendChild(document.createTextNode('+' + q.reward));
+      top.appendChild(rew); row.appendChild(top);
+      var bar = el('div', 'bar'), fill = document.createElement('i');
+      fill.style.width = Math.round(q.p / q.goal * 100) + '%';
+      bar.appendChild(fill); row.appendChild(bar);
+      var foot = el('div', 'q-foot');
+      foot.appendChild(el('span', 'q-num', q.p + ' / ' + q.goal));
+      if (q.p >= q.goal) {
+        var btn = el('button', 'mini', 'Забрать');
+        btn.type = 'button'; btn.id = 'claim-' + i;
+        btn.addEventListener('click', function () { claim(i); });
+        foot.appendChild(btn);
+      }
+      row.appendChild(foot); sheetBody.appendChild(row);
+    });
+    addNote('После награды появляется новое задание. Чем больше выполнено, тем оно сложнее.');
+  }
+  function claim(i) {
+    var q = prog.quests[i];
+    if (!q || q.p < q.goal) return;
+    prog.coins += q.reward; prog.done += 1;
+    prog.quests[i] = null;
+    prog.quests[i] = makeQuest(prog);
+    saveProg(true); renderCoins(); renderQuests();
+  }
+
+  /* ---- achievements and stats ---- */
+  function renderAch() {
+    clearBody();
+    var got = ACH.filter(function (a) { return prog.ach[a.id]; }).length;
+    addSec('Статистика');
+    var sg = el('div', 'statgrid');
+    ['games', 'maxFloors', 'maxCombo', 'perfects', 'bosses', 'waves', 'gifts', 'duelWins', 'daily'].forEach(function (k) {
+      var c = el('div', 'st');
+      c.appendChild(el('b', '', String(prog.stats[k])));
+      c.appendChild(el('span', '', STAT_NAMES[k]));
+      sg.appendChild(c);
+    });
+    sheetBody.appendChild(sg);
+    addSec('Достижения ' + got + ' из ' + ACH.length);
+    ACH.forEach(function (a) {
+      var has = !!prog.ach[a.id];
+      var row = el('div', 'ach' + (has ? ' got' : ''));
+      var ic = el('div', 'ic');
+      ic.innerHTML = has
+        ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"/></svg>'
+        : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>';
+      row.appendChild(ic);
+      var tx = el('div', 'tx');
+      tx.appendChild(el('b', '', a.name));
+      tx.appendChild(el('small', '', a.desc + (a.note ? '. ' + a.note : '')));
+      row.appendChild(tx);
+      row.appendChild(el('span', 'rw', has ? 'получено' : '+20'));
+      sheetBody.appendChild(row);
+    });
+  }
+
+  /* ---- duel menu ---- */
+  var duelType = 'tower', duelOpp = 'bot', duelBotLvl = 'mid', duelCode = '';
+  function renderDuel() {
+    if (sheetName !== 'duel') return;
+    clearBody();
+    var s = prog.stats;
+    addNote('Две дуэли: на башнях побеждает тот, кто набрал больше очков за 60 секунд. В дуэли слов нужно быстрее соперника написать слово: кто быстрее, тот не теряет ширину блока, а второй блок уменьшается. Дуэлей: ' + s.duels + ', побед: ' + s.duelWins + '.');
+    addSec('Игра');
+    subRow([['tower', 'Башни'], ['word', 'Слова']], duelType, function (v) { duelType = v; renderDuel(); }, 'Вид дуэли');
+    addSec('Соперник');
+    subRow([['bot', 'Бот'], ['human', 'Игрок']], duelOpp, function (v) { duelOpp = v; renderDuel(); }, 'Соперник');
+    if (duelOpp === 'bot') {
+      addSec('Сложность бота');
+      subRow([['easy', 'Лёгкий'], ['mid', 'Средний'], ['hard', 'Сильный']], duelBotLvl, function (v) { duelBotLvl = v; renderDuel(); }, 'Сложность бота');
+      var go = el('button', 'go', 'Играть с ботом');
+      go.type = 'button'; go.id = 'duelBotGo'; go.style.marginTop = '18px';
+      go.addEventListener('click', function () { startDuel({ type: duelType, kind: 'bot', bot: duelBotLvl }); });
+      sheetBody.appendChild(go);
+      addNote(duelType === 'tower' ? 'Бот строит свою башню рядом с твоей. Чем сильнее бот, тем чаще он попадает идеально и тем реже падает.' : 'Бот печатает слово с задержкой: лёгкий медленно, сильный почти как опытный игрок.');
+      return;
+    }
+    if (!roomNs) { addNote('Игра с другом доступна, когда страница открыта в аккаунте Claude и у тебя есть доступ «Участник» или выше.'); return; }
+    if (net.status === 'wait') {
+      addSec('Код комнаты');
+      sheetBody.appendChild(el('div', 'code', net.code));
+      addNote('Назови код другу. Он открывает эту же страницу, выбирает «Игрок» и вводит код. Игра начнётся сама, когда он войдёт.');
+      var cancel = el('button', 'go small ghost', 'Отменить');
+      cancel.type = 'button'; cancel.style.marginTop = '16px';
+      cancel.addEventListener('click', function () { netLeave(); renderDuel(); });
+      sheetBody.appendChild(cancel);
+      return;
+    }
+    addSec('Своя комната');
+    var cr = el('button', 'go small', 'Создать комнату');
+    cr.type = 'button'; cr.id = 'roomCreate';
+    cr.addEventListener('click', function () { createRoom(duelType); });
+    sheetBody.appendChild(cr);
+    addSec('Войти по коду');
+    var row = el('div', 'row');
+    var inp = el('input', 'field');
+    inp.id = 'roomCode'; inp.type = 'text'; inp.inputMode = 'numeric'; inp.maxLength = 4; inp.placeholder = '0000'; inp.value = duelCode;
+    inp.setAttribute('aria-label', 'Код комнаты'); inp.autocomplete = 'off';
+    inp.addEventListener('input', function () { duelCode = inp.value.replace(/[^0-9]/g, '').slice(0, 4); inp.value = duelCode; });
+    var jb = el('button', 'go small', 'Войти');
+    jb.type = 'button'; jb.id = 'roomJoin';
+    jb.addEventListener('click', function () { joinRoom(duelCode, duelType); });
+    row.appendChild(inp); row.appendChild(jb);
+    sheetBody.appendChild(row);
+    if (net.status && net.status !== 'wait') addNote(net.status);
+    addNote('Вид дуэли выбирает хозяин комнаты, у друга он подставится сам.');
+  }
+
+  /* ================= wiring ================= */
+  cv.addEventListener('pointerdown', function (e) { e.preventDefault(); tap(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' && state === 'play' && e.target === document.body) { e.preventDefault(); tap(); }
+    if (e.code === 'Escape' && !sheet.hidden) closeSheet();
+  });
+  $('startBtn').addEventListener('click', startGame);
+  $('againBtn').addEventListener('click', function () { if (duel && duel.kind === 'bot') startDuel(duel.cfg); else startGame(); });
+  $('menuBtn').addEventListener('click', toMenu);
+  $('shareBtn').addEventListener('click', function () {
+    var t = 'Я набрал ' + $('finalScore').textContent + ' очков в игре «Стопка». Сможешь больше?';
+    try {
+      if (navigator.share) { navigator.share({ title: 'Стопка', text: t }).catch(function () {}); return; }
+      navigator.clipboard.writeText(t).then(function () { toast('Текст скопирован'); });
+    } catch (e) { toast(t, 4000); }
+  });
+  $('contBtn').addEventListener('click', doContinue);
+  $('finishBtn').addEventListener('click', declineContinue);
+  $('tabLb').addEventListener('click', function () { openSheet('lb'); });
+  $('tabSkins').addEventListener('click', function () { openSheet('skins'); });
+  $('tabQuests').addEventListener('click', function () { openSheet('quests'); });
+  $('tabAch').addEventListener('click', function () { openSheet('ach'); });
+  $('tabDuel').addEventListener('click', function () { openSheet('duel'); });
+  $('closeBtn').addEventListener('click', closeSheet);
+  Array.prototype.forEach.call(modesEl.querySelectorAll('button'), function (b) {
+    b.addEventListener('click', function () {
+      var m = b.getAttribute('data-m');
+      if (!MODES[m] || mode === m) return;
+      mode = m; prog.mode = m; saveProg();
+      if (state === 'ready') reset();
+      updateMenuUI();
+    });
+  });
+  Array.prototype.forEach.call(diffEl.querySelectorAll('button'), function (b) {
+    b.addEventListener('click', function () {
+      var k = b.getAttribute('data-d');
+      if (!DIFFS[k] || prog.diff === k) return;
+      prog.diff = k; saveProg();
+      if (state === 'ready') reset();
+      updateMenuUI();
+    });
+  });
+  document.getElementById('pauseBtn').addEventListener('click', function (e) { e.stopPropagation(); setPause(!paused); });
+  soundBtn.addEventListener('click', function () {
+    muted = !muted;
+    soundBtn.setAttribute('aria-pressed', String(!muted));
+    if (!muted) audio();
+  });
+  musicBtn.addEventListener('click', function () {
+    prog.music = prog.music ? 0 : 1; saveProg();
+    musicBtn.setAttribute('aria-pressed', String(!!prog.music));
+    if (prog.music) { audio(); musicKick(); }
+  });
+  document.addEventListener('pointerdown', function () { audio(); if (prog.music && !musOn) musicKick(); }, { once: true });
+  wordInput.addEventListener('input', onWordInput);
+  wordInput.addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });
+  window.addEventListener('resize', resize);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', function () {
+      var wv = duel && duel.type === 'word' && state !== 'ready' && !wordBox.hidden;
+      document.body.style.height = wv ? Math.round(window.visualViewport.height) + 'px' : '';
+      resize();
+    });
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) return;
+    if (contPending) declineContinue();
+    if (dirty) saveProg(true);
+  });
+  document.addEventListener('touchmove', function (e) {
+    if (!e.target.closest || !e.target.closest('.sheet-body, .modes, input')) e.preventDefault();
+  }, { passive: false });
+
+  function renderShop() {
+    var box = document.getElementById('shop');
+    if (!box) return;
+    box.hidden = mode === 'daily';
+    box.innerHTML = '';
+    ['shield', 'slow', 'magnet'].forEach(function (k) {
+      var b = el('button', 'mchip', SHOP[k][0] + ' ×' + prog.inv[k] + ' · ' + SHOP[k][1]);
+      b.type = 'button'; b.id = 'shop-' + k;
+      b.addEventListener('click', function () {
+        if (prog.coins < SHOP[k][1]) { toast('Не хватает монет'); return; }
+        prog.coins -= SHOP[k][1]; prog.inv[k]++; saveProg(true); renderCoins(); renderShop();
+        toast('Куплено: ' + SHOP[k][0] + '. Возьмётся в следующую партию');
+      });
+      box.appendChild(b);
+    });
+  }
+
+  /* ================= boot ================= */
+  resize();
+  reset();
+  applyProg();
+  renderShop();
+  requestAnimationFrame(frame);
+  initCloud();
+  setTimeout(function () {
+    var k = dayKey(), y = new Date(Date.now() - 864e5), yk = y.getFullYear() + '-' + pad(y.getMonth() + 1) + '-' + pad(y.getDate());
+    if (prog.login.k === k) return;
+    prog.login.n = prog.login.k === yk ? prog.login.n + 1 : 1; prog.login.k = k;
+    var bonus = 10 * Math.min(prog.login.n, 7);
+    prog.coins += bonus; saveProg(); renderCoins();
+    toast('Ежедневный подарок: +' + bonus + ' монет. Дней подряд: ' + prog.login.n);
+  }, 1200);
+
+  /* ================= second game: Звездопад ================= */
+  var g2el = document.getElementById('g2'), g2cv = document.getElementById('cv2'), g2c = g2cv.getContext('2d');
+  var g2menu = document.getElementById('g2menu'), g2score = document.getElementById('g2score'), g2lives = document.getElementById('g2lives');
+  var G = { on: false, run: false, w: 360, h: 640, cup: 180, tx: 180, items: [], sc: 0, lives: 3, t: 0, sp: 0, ds: 1, last: 0, shake: 0, combo: 0, raf: 0 };
+  var curGame = 1;
+  function g2resize() {
+    var r = stage.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
+    G.w = Math.max(200, r.width); G.h = Math.max(300, r.height);
+    g2cv.width = Math.round(G.w * dpr); g2cv.height = Math.round(G.h * dpr);
+    g2c.setTransform(dpr, 0, 0, dpr, 0, 0);
+    G.cup = Math.max(40, Math.min(G.w - 40, G.cup)); G.tx = G.cup;
+  }
+  function showGame(n) {
+    curGame = n;
+    document.querySelectorAll('.gsw button').forEach(function (b) { b.setAttribute('aria-pressed', String(+b.getAttribute('data-g') === n)); });
+    if (n === 2) {
+      if (state === 'ready' || state === 'over' || true) { startOv.hidden = true; }
+      g2el.hidden = false; g2menu.hidden = false; G.on = true; G.run = false;
+      g2resize(); g2best();
+      if (!G.raf) G.raf = requestAnimationFrame(g2frame);
+    } else {
+      g2el.hidden = true; G.on = false; G.run = false;
+      if (state === 'ready') startOv.hidden = false;
+    }
+  }
+  function g2best() { document.getElementById('g2best').textContent = 'Рекорд: ' + prog.g2; }
+  function g2start() {
+    audio(); G.items = []; G.sc = 0; G.lives = 3; G.t = 0; G.ds = 1; G.combo = 0; G.sp = 0.5; G.last = 0; G.run = true; G.shake = 0;
+    g2menu.hidden = true; g2score.textContent = '0'; g2hudLives(); musicKick();
+  }
+  function g2hudLives() { var s = ''; for (var i = 0; i < G.lives; i++) s += '♥'; g2lives.textContent = s; }
+  function g2spawn() {
+    var r = Math.random(), k = 'star';
+    if (r < 0.22 + Math.min(0.2, G.sc * 0.003)) k = 'bomb'; else if (r > 0.97) k = 'gold'; else if (r > 0.93 && G.lives < 5) k = 'heart';
+    G.items.push({ k: k, x: 24 + Math.random() * (G.w - 48), y: -20, v: 150 + Math.min(260, G.sc * 3.2) + Math.random() * 40, rot: Math.random() * 6 });
+  }
+  function g2end() {
+    G.run = false;
+    var best = G.sc > prog.g2, earned = Math.floor(G.sc / 6);
+    if (best) prog.g2 = G.sc;
+    prog.coins += earned; prog.stats.games++; saveProg(true); renderCoins();
+    document.getElementById('g2title').textContent = best && G.sc > 0 ? 'Новый рекорд' : 'Игра окончена';
+    document.getElementById('g2desc').textContent = 'Очки: ' + G.sc + '. Монет получено: ' + earned + '.';
+    document.getElementById('g2goLbl').textContent = 'Ещё раз';
+    if (window.__g2submit) window.__g2submit(G.sc);
+    g2best(); g2menu.hidden = false; buzz(60); beep(180, 0.3, 'sawtooth', 0.08);
+  }
+  function g2star(c, x, y, r, rot, fill) {
+    c.save(); c.translate(x, y); c.rotate(rot); c.fillStyle = fill; c.beginPath();
+    for (var i = 0; i < 10; i++) { var a = i * Math.PI / 5 - Math.PI / 2, rr = i % 2 ? r * 0.45 : r; c.lineTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+    c.closePath(); c.fill(); c.restore();
+  }
+  function g2frame(ts) {
+    G.raf = 0;
+    if (!G.on) return;
+    G.raf = requestAnimationFrame(g2frame);
+    var dt = Math.min(0.05, (ts - (G.last || ts)) / 1000); G.last = ts;
+    var c = g2c, W2 = G.w, H2 = G.h, cy = H2 - 88;
+    G.cup += (G.tx - G.cup) * Math.min(1, dt * 18);
+    if (G.run && !paused) {
+      G.t += dt; G.sp -= dt;
+      if (G.sp <= 0) { g2spawn(); G.sp = Math.max(0.32, 0.85 - G.sc * 0.008); }
+      for (var i = G.items.length - 1; i >= 0; i--) {
+        var it = G.items[i]; it.y += it.v * dt; it.rot += dt * 2;
+        var hit = Math.abs(it.x - G.cup) < 42 && it.y > cy - 18 && it.y < cy + 26;
+        if (hit) {
+          G.items.splice(i, 1);
+          if (it.k === 'bomb') { G.lives--; G.shake = 0.3; G.combo = 0; buzz(40); beep(150, 0.25, 'square', 0.08); }
+          else if (it.k === 'heart') { G.lives = Math.min(5, G.lives + 1); beep(660, 0.12, 'sine', 0.08); }
+          else { G.combo++; G.sc += it.k === 'gold' ? 5 : 1; beep(520 + Math.min(G.combo, 12) * 40, 0.08, 'triangle', 0.07); }
+          g2score.textContent = G.sc; g2hudLives();
+        } else if (it.y > H2 + 30) {
+          G.items.splice(i, 1);
+          if (it.k === 'star' || it.k === 'gold') { G.lives--; G.combo = 0; G.shake = 0.2; beep(220, 0.15, 'sawtooth', 0.05); g2hudLives(); }
+        }
+      }
+      if (G.lives <= 0) g2end();
+    }
+    G.shake = Math.max(0, G.shake - dt);
+    c.clearRect(0, 0, W2, H2);
+    c.save();
+    if (G.shake > 0) c.translate((Math.random() - 0.5) * 8, 0);
+    for (var s = 0; s < 28; s++) { c.fillStyle = 'rgba(255,244,238,' + (0.15 + 0.15 * ((s * 7) % 3)) + ')'; c.fillRect((s * 97) % W2, (s * 53 + G.t * 8 * (1 + s % 3)) % H2, 2, 2); }
+    G.items.forEach(function (it) {
+      if (it.k === 'star') g2star(c, it.x, it.y, 15, it.rot, '#f0d27a');
+      else if (it.k === 'gold') { g2star(c, it.x, it.y, 19, it.rot, '#ffb347'); g2star(c, it.x, it.y, 9, it.rot, '#fff0b8'); }
+      else if (it.k === 'heart') { c.fillStyle = '#e88a9a'; c.beginPath(); c.arc(it.x - 6, it.y - 3, 7, 0, 7); c.arc(it.x + 6, it.y - 3, 7, 0, 7); c.moveTo(it.x - 13, it.y); c.lineTo(it.x, it.y + 15); c.lineTo(it.x + 13, it.y); c.fill(); }
+      else { c.fillStyle = '#2c2a3e'; c.beginPath(); c.arc(it.x, it.y, 14, 0, 7); c.fill(); c.strokeStyle = '#8f8aa8'; c.lineWidth = 2; c.stroke(); c.strokeStyle = '#d9a35c'; c.beginPath(); c.moveTo(it.x + 6, it.y - 12); c.lineTo(it.x + 12, it.y - 20); c.stroke(); c.fillStyle = '#e88a4a'; c.fillRect(it.x + 10, it.y - 23, 5, 5); }
+    });
+    c.fillStyle = '#c98f6a'; c.beginPath(); c.moveTo(G.cup - 38, cy - 14); c.lineTo(G.cup + 38, cy - 14); c.lineTo(G.cup + 28, cy + 24); c.lineTo(G.cup - 28, cy + 24); c.closePath(); c.fill();
+    c.fillStyle = '#e8b896'; c.fillRect(G.cup - 38, cy - 18, 76, 7);
+    c.restore();
+  }
+  function g2move(e) {
+    if (!G.on) return;
+    var r = stage.getBoundingClientRect();
+    G.tx = Math.max(36, Math.min(r.width - 36, e.clientX - r.left));
+  }
+  g2cv.addEventListener('pointerdown', g2move);
+  g2cv.addEventListener('pointermove', g2move);
+  document.getElementById('g2go').addEventListener('click', g2start);
+  document.querySelectorAll('.gsw button').forEach(function (b) { b.addEventListener('click', function () { showGame(+b.getAttribute('data-g')); }); });
+  window.addEventListener('resize', function () { if (G.on) g2resize(); });
+  /* swipe between games on menu screens */
+  (function () {
+    var sx = null, sy = 0;
+    function down(e) { if (e.target.closest && e.target.closest('.modes, .nav, button, .sheet, input, textarea')) { sx = null; return; } sx = e.clientX; sy = e.clientY; }
+    function up(e) {
+      if (sx === null) return;
+      var dx = e.clientX - sx, dy = e.clientY - sy; sx = null;
+      if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+      if (curGame === 1 && dx < 0 && state === 'ready' && !startOv.hidden) showGame(2);
+      else if (curGame === 2 && dx > 0 && !G.run) showGame(1);
+    }
+    startOv.addEventListener('pointerdown', down); startOv.addEventListener('pointerup', up);
+    g2menu.addEventListener('pointerdown', down); g2menu.addEventListener('pointerup', up);
+  })();
+
+  /* ================= public leaderboard (Supabase) ================= */
+  /* Fill these two values in, see README.md. The anon key is meant to be public. */
+  var SB_URL = '';
+  var SB_KEY = '';
+  try { var cfg = window.STOPKA_CONFIG || {}; if (!SB_URL && cfg.url) SB_URL = String(cfg.url); if (!SB_KEY && cfg.key) SB_KEY = String(cfg.key); } catch (e) {}
+  try { if (!SB_URL) SB_URL = localStorage.getItem('stopka-sburl') || ''; if (!SB_KEY) SB_KEY = localStorage.getItem('stopka-sbkey') || ''; } catch (e) {}
+
+  var clientId = (function () {
+    try { var v = localStorage.getItem('stopka-client'); if (v) return v; } catch (e) {}
+    var id = (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) { var r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 3 | 8)).toString(16); });
+    try { localStorage.setItem('stopka-client', id); } catch (e) {}
+    return id;
+  })();
+  function myName() {
+    var n = '';
+    try { n = localStorage.getItem('stopka-name') || ''; } catch (e) {}
+    if (!n) { n = 'Игрок' + (1000 + Math.floor(Math.random() * 9000)); try { localStorage.setItem('stopka-name', n); } catch (e) {} }
+    return n;
+  }
+  function sbRpc(fn, body) {
+    return fetch(SB_URL.replace(/\/$/, '') + '/rest/v1/rpc/' + fn, {
+      method: 'POST',
+      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + SB_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) throw new Error('http ' + r.status);
+      return r.status === 204 ? null : r.text().then(function (t) { return t ? JSON.parse(t) : null; });
+    });
+  }
+  function initCloud() { dbState = SB_URL && SB_KEY ? 'ready' : 'off'; return Promise.resolve(); }
+  function queueScore() {
+    if (!SB_URL || !SB_KEY || !lastG || lastG.points < 1) return;
+    var diff = lastG.mode === 'daily' ? 'daily' : lastG.diff;
+    if (diff !== 'normal' && diff !== 'hard' && diff !== 'daily') return;
+    sbRpc('submit_score', { p_client: clientId, p_name: myName(), p_diff: diff, p_score: Math.min(lastG.points, 2000) }).then(function () {
+      lbRowsSb = null;
+      if (sheetName === 'lb') renderLb();
+    }).catch(function () {});
+  }
+
+  window.__g2submit = function (score) {
+    if (!SB_URL || !SB_KEY || score < 1) return;
+    sbRpc('submit_score', { p_client: clientId, p_name: myName(), p_diff: 'stars', p_score: Math.min(score, 2000) }).then(function () { lbRowsSb = null; }).catch(function () {});
+  };
+  var lbTab = 'all', lbDiff = 'normal', lbRowsSb = null, lbBusy = false, lbFail = false;
+  function lbParams() {
+    if (lbTab === 'today') return { p_period: 'day', p_diff: 'daily', p_limit: 20 };
+    if (lbTab === 'stars') return { p_period: 'all', p_diff: 'stars', p_limit: 20 };
+    return { p_period: lbTab === 'week' ? 'week' : 'all', p_diff: lbDiff, p_limit: 20 };
+  }
+  function renderLb() {
+    if (sheetName !== 'lb') return;
+    var tok = ++lbTok;
+    clearBody();
+    subRow([['all', 'Всё время'], ['week', 'Неделя'], ['today', 'Вызов дня'], ['stars', 'Звездопад']], lbTab, function (v) { lbTab = v; lbRowsSb = null; renderLb(); }, 'Период');
+    if (lbTab !== 'today' && lbTab !== 'stars') subRow([['normal', 'Обычная'], ['hard', 'Сложная']], lbDiff, function (v) { lbDiff = v; lbRowsSb = null; renderLb(); }, 'Сложность');
+    var nameRow = el('div', 'row'); nameRow.style.margin = '14px 0 4px';
+    var inp = el('input', 'field');
+    inp.id = 'playerName'; inp.type = 'text'; inp.maxLength = 16; inp.value = myName(); inp.style.letterSpacing = '0.02em'; inp.style.fontSize = '16px';
+    inp.setAttribute('aria-label', 'Твоё имя в таблице'); inp.autocomplete = 'off';
+    inp.addEventListener('change', function () {
+      var v = inp.value.replace(/[^\p{L}\p{N} _.-]/gu, '').trim().slice(0, 16);
+      if (!v) v = myName();
+      inp.value = v;
+      try { localStorage.setItem('stopka-name', v); } catch (e) {}
+    });
+    nameRow.appendChild(inp);
+    sheetBody.appendChild(nameRow);
+    sheetBody.appendChild(el('p', 'note', 'Твоё имя в таблице. Новое имя применится к следующим результатам.'));
+    if (!SB_URL || !SB_KEY) {
+      sheetBody.appendChild(el('p', 'note', 'Таблица пока не подключена. Вставь адрес проекта и публичный ключ (anon public) из Supabase, они сохранятся в этом браузере. Твой лучший результат на этом устройстве: ' + lbBest() + '.'));
+      var u = el('input', 'field'); u.id = 'sbUrl'; u.type = 'url'; u.placeholder = 'https://xxxx.supabase.co'; u.style.cssText = 'letter-spacing:0;font-size:14px;margin-top:12px;width:100%;flex:none';
+      var k = el('input', 'field'); k.id = 'sbKey'; k.type = 'text'; k.placeholder = 'Ключ anon public'; k.style.cssText = 'letter-spacing:0;font-size:14px;margin-top:10px;width:100%;flex:none';
+      u.autocomplete = 'off'; k.autocomplete = 'off';
+      var sv = el('button', 'go small', 'Подключить'); sv.type = 'button'; sv.id = 'sbSave'; sv.style.marginTop = '14px';
+      sv.addEventListener('click', function () {
+        var uv = u.value.trim(), kv = k.value.trim();
+        if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(uv) || kv.length < 20) { toast('Проверь адрес и ключ'); return; }
+        SB_URL = uv; SB_KEY = kv;
+        try { localStorage.setItem('stopka-sburl', uv); localStorage.setItem('stopka-sbkey', kv); } catch (e) {}
+        initCloud(); lbRowsSb = null; renderLb();
+      });
+      sheetBody.appendChild(u); sheetBody.appendChild(k); sheetBody.appendChild(sv);
+      return;
+    }
+    if (lbRowsSb === null) {
+      if (!lbBusy) {
+        lbBusy = true; lbFail = false;
+        sbRpc('top_scores', lbParams()).then(function (rows) { lbRowsSb = Array.isArray(rows) ? rows : []; }).catch(function () { lbRowsSb = []; lbFail = true; }).then(function () { lbBusy = false; if (tok === lbTok || sheetName === 'lb') renderLb(); });
+      }
+      sheetBody.appendChild(el('p', 'note', 'Загружаю таблицу…'));
+      return;
+    }
+    if (lbFail) { sheetBody.appendChild(el('p', 'note', 'Не удалось загрузить таблицу. Проверь интернет и открой раздел снова.')); return; }
+    if (!lbRowsSb.length) { sheetBody.appendChild(el('p', 'note', 'Пока в этой таблице никого. Сыграй, и твой результат появится здесь первым.')); return; }
+    var ol = el('ol', 'lb');
+    lbRowsSb.forEach(function (r, i) {
+      var li = el('li', r.client === clientId ? 'me' : '');
+      li.appendChild(el('span', 'rank', String(i + 1)));
+      var who = el('span', 'who', r.name || 'Игрок');
+      if (r.client === clientId) who.appendChild(el('em', '', 'ты'));
+      li.appendChild(who);
+      li.appendChild(el('span', 'pts', String(r.best)));
+      ol.appendChild(li);
+    });
+    sheetBody.appendChild(ol);
+    sheetBody.appendChild(el('p', 'note', 'В таблице лучший результат каждого игрока. Лёгкая сложность и режимы кроме классики и вызова дня в зачёт не идут.'));
+    var rf = el('button', 'mini', 'Обновить'); rf.type = 'button'; rf.style.marginTop = '14px';
+    rf.addEventListener('click', function () { lbRowsSb = null; renderLb(); });
+    sheetBody.appendChild(rf);
+  }
+
+  /* ================= duel with a friend over WebRTC (same Wi-Fi or internet), pairing by codes ================= */
+  var rtc = { pc: null, dc: null, step: '', code: '', err: '' };
+  function lanClose() {
+    try { if (rtc.dc) rtc.dc.close(); } catch (e) {}
+    try { if (rtc.pc) rtc.pc.close(); } catch (e) {}
+    rtc.pc = null; rtc.dc = null; rtc.step = ''; rtc.code = '';
+  }
+  var _origNetLeave = netLeave;
+  netLeave = function () { _origNetLeave(); lanClose(); };
+  function profileName(by, cb) {
+    if (typeof by === 'string' && by.indexOf('name:') === 0) { cb(by.slice(5) || 'Соперник'); return; }
+    cb('Соперник');
+  }
+  function lanEnc(d) { return btoa(JSON.stringify(d)); }
+  function lanDec(s) { return JSON.parse(atob(String(s).replace(/\s+/g, ''))); }
+  function lanPc() {
+    var pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+    rtc.pc = pc;
+    pc.onconnectionstatechange = function () {
+      if (pc.connectionState === 'failed') {
+        if (duel) { oppLeft(); return; }
+        rtc.err = 'Не удалось соединиться. Проверьте, что оба устройства в одной сети, и попробуйте ещё раз.';
+        rtc.step = ''; renderDuel();
+      }
+    };
+    return pc;
+  }
+  function waitIce(pc) {
+    return new Promise(function (res) {
+      if (pc.iceGatheringState === 'complete') { res(); return; }
+      var done = false;
+      function fin() { if (!done) { done = true; res(); } }
+      pc.addEventListener('icegatheringstatechange', function () { if (pc.iceGatheringState === 'complete') fin(); });
+      setTimeout(fin, 4000);
+    });
+  }
+  function makeRoom(dc, pc) {
+    var hs = {}, peerCbs = [];
+    var room = {
+      name: 'lan',
+      emit: function (t, d) { try { if (dc.readyState === 'open') dc.send(JSON.stringify({ t: t, d: d, n: myName() })); } catch (e) {} return Promise.resolve(); },
+      on: function (t, f) { (hs[t] = hs[t] || []).push(f); return function () { hs[t] = (hs[t] || []).filter(function (x) { return x !== f; }); }; },
+      onPeers: function (f) { peerCbs.push(f); return function () { peerCbs = peerCbs.filter(function (x) { return x !== f; }); }; },
+      leave: function () { try { dc.close(); } catch (e) {} try { pc.close(); } catch (e) {} return Promise.resolve(); }
+    };
+    dc.onmessage = function (ev) {
+      var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m || typeof m.t !== 'string') return;
+      var msg = { topic: m.t, data: m.d, isMe: false, sameTab: false, peer: 'lan-peer', by: 'name:' + String(m.n || 'Соперник').slice(0, 16), kind: 'viewer', guest: false };
+      (hs[m.t] || []).slice().forEach(function (f) { try { f(msg); } catch (e) {} });
+    };
+    dc.onclose = function () { peerCbs.slice().forEach(function (f) { try { f({ left: [{ peer: 'lan-peer' }], joined: [], updated: [], peers: [] }); } catch (e) {} }); };
+    return room;
+  }
+  function wireDc(dc, pc, host, type) {
+    var room = makeRoom(dc, pc);
+    netAttach(room, 'lan', host, type);
+    dc.onopen = function () { rtc.step = ''; if (!host) netEmit('hello', {}); };
+  }
+  function lanHost(type) {
+    netLeave(); rtc.err = ''; rtc.step = 'busy'; renderDuel();
+    var pc = lanPc(), dc = pc.createDataChannel('duel');
+    rtc.dc = dc; wireDc(dc, pc, true, type);
+    pc.createOffer().then(function (o) { return pc.setLocalDescription(o); }).then(function () { return waitIce(pc); }).then(function () {
+      rtc.code = lanEnc(pc.localDescription); rtc.step = 'offer'; renderDuel();
+    }).catch(function () { rtc.err = 'Не удалось создать код. Попробуй ещё раз.'; rtc.step = ''; renderDuel(); });
+  }
+  function lanFinish(text) {
+    var d;
+    try { d = lanDec(text); } catch (e) { rtc.err = 'Код ответа не распознан. Скопируй его целиком.'; renderDuel(); return; }
+    if (!rtc.pc) { rtc.err = 'Соединение сброшено. Создай игру заново.'; rtc.step = ''; renderDuel(); return; }
+    rtc.err = ''; rtc.step = 'busy'; renderDuel();
+    rtc.pc.setRemoteDescription(d).catch(function () { rtc.err = 'Код ответа не подошёл. Создай игру заново.'; rtc.step = ''; renderDuel(); });
+  }
+  function lanJoin(text) {
+    var d;
+    try { d = lanDec(text); } catch (e) { rtc.err = 'Код не распознан. Скопируй его целиком.'; renderDuel(); return; }
+    netLeave(); rtc.err = ''; rtc.step = 'busy'; renderDuel();
+    var pc = lanPc();
+    pc.ondatachannel = function (ev) { rtc.dc = ev.channel; wireDc(ev.channel, pc, false, 'tower'); };
+    pc.setRemoteDescription(d).then(function () { return pc.createAnswer(); }).then(function (a) { return pc.setLocalDescription(a); }).then(function () { return waitIce(pc); }).then(function () {
+      rtc.code = lanEnc(pc.localDescription); rtc.step = 'answer'; renderDuel();
+    }).catch(function () { rtc.err = 'Код не подошёл. Попроси друга создать игру заново.'; rtc.step = ''; renderDuel(); });
+  }
+  function codeBox(value, readOnly, id) {
+    var t = document.createElement('textarea');
+    t.id = id; t.value = value; t.readOnly = !!readOnly; t.rows = 4;
+    t.setAttribute('autocomplete', 'off'); t.setAttribute('autocapitalize', 'off'); t.spellcheck = false;
+    t.style.cssText = 'display:block;width:100%;margin-top:8px;padding:10px;font:12px/1.35 ui-monospace,Menlo,Consolas,monospace;color:var(--text);background:rgba(255,244,238,0.08);border:1px solid var(--line);border-radius:10px;resize:none;-webkit-user-select:text;user-select:text;word-break:break-all';
+    return t;
+  }
+  function copyBtn(box) {
+    var b = el('button', 'mini', 'Скопировать'); b.type = 'button'; b.style.marginTop = '10px';
+    b.addEventListener('click', function () {
+      var ok = function () { toast('Код скопирован'); };
+      try { navigator.clipboard.writeText(box.value).then(ok).catch(function () { box.select(); toast('Выдели и скопируй код вручную'); }); }
+      catch (e) { box.select(); toast('Выдели и скопируй код вручную'); }
+    });
+    return b;
+  }
+  function lanUi() {
+    if (typeof RTCPeerConnection === 'undefined') { addNote('Этот браузер не умеет прямое соединение между устройствами.'); return; }
+    if (rtc.err) addNote(rtc.err);
+    if (rtc.step === 'busy') { addNote('Готовлю соединение…'); return; }
+    var cancel = function () { var c = el('button', 'go small ghost', 'Отменить'); c.type = 'button'; c.style.marginTop = '16px'; c.addEventListener('click', function () { netLeave(); renderDuel(); }); return c; };
+    if (rtc.step === 'offer') {
+      addSec('Шаг 1. Отправь этот код другу');
+      var b1 = codeBox(rtc.code, true, 'lanOffer'); sheetBody.appendChild(b1); sheetBody.appendChild(copyBtn(b1));
+      addSec('Шаг 2. Вставь код, который пришлёт друг');
+      var b2 = codeBox('', false, 'lanAnswer'); sheetBody.appendChild(b2);
+      var go = el('button', 'go small', 'Соединить'); go.type = 'button'; go.id = 'lanConnect'; go.style.marginTop = '12px';
+      go.addEventListener('click', function () { lanFinish(b2.value); });
+      sheetBody.appendChild(go); sheetBody.appendChild(cancel());
+      return;
+    }
+    if (rtc.step === 'answer') {
+      addSec('Отправь этот код хозяину игры');
+      var b3 = codeBox(rtc.code, true, 'lanReply'); sheetBody.appendChild(b3); sheetBody.appendChild(copyBtn(b3));
+      addNote('Когда хозяин вставит его и нажмёт «Соединить», игра начнётся сама.');
+      sheetBody.appendChild(cancel());
+      return;
+    }
+    addSec('Быстрая игра по интернету');
+    if (SB_URL && SB_KEY) {
+      if (onl.err) addNote(onl.err);
+      if (onl.state === 'search') {
+        addNote('Ищу соперника… Другой игрок должен открыть эту же игру и нажать «Найти соперника» с тем же видом дуэли.');
+        var cs = el('button', 'go small ghost', 'Отменить'); cs.type = 'button'; cs.id = 'rtCancel'; cs.addEventListener('click', function () { netLeave(); renderDuel(); });
+        sheetBody.appendChild(cs); return;
+      }
+      var fb = el('button', 'go small', 'Найти соперника'); fb.type = 'button'; fb.id = 'rtFind';
+      fb.addEventListener('click', function () { onlFind(duelType); });
+      sheetBody.appendChild(fb);
+    } else addNote('Нужно подключить Supabase: вкладка «Лидеры», там поля для адреса и ключа.');
+    addSec('Игра по коду (без сервера)');
+    var cr = el('button', 'go small', 'Создать игру'); cr.type = 'button'; cr.id = 'lanCreate';
+    cr.addEventListener('click', function () { lanHost(duelType); });
+    sheetBody.appendChild(cr);
+    addSec('Войти в игру друга');
+    var b4 = codeBox('', false, 'lanPaste'); b4.placeholder = 'Вставь код друга'; sheetBody.appendChild(b4);
+    var jn = el('button', 'go small', 'Подключиться'); jn.type = 'button'; jn.id = 'lanJoin'; jn.style.marginTop = '12px';
+    jn.addEventListener('click', function () { lanJoin(b4.value); });
+    sheetBody.appendChild(jn);
+    addNote('Работает без сервера: два устройства соединяются напрямую. Лучше всего в одной сети Wi-Fi, но обычно получается и через интернет. Вид дуэли выбирает хозяин, у друга он подставится сам.');
+  }
+  function renderDuel() {
+    if (sheetName !== 'duel') return;
+    clearBody();
+    var s = prog.stats;
+    addNote('Две дуэли: на башнях побеждает тот, кто набрал больше очков за 60 секунд. В дуэли слов нужно быстрее соперника написать слово: кто быстрее, тот не теряет ширину блока, а у второго блок уменьшается. Дуэлей: ' + s.duels + ', побед: ' + s.duelWins + '.');
+    addSec('Игра');
+    subRow([['tower', 'Башни'], ['word', 'Слова']], duelType, function (v) { duelType = v; renderDuel(); }, 'Вид дуэли');
+    addSec('Соперник');
+    subRow([['bot', 'Бот'], ['human', 'Друг']], duelOpp, function (v) { duelOpp = v; renderDuel(); }, 'Соперник');
+    if (duelOpp === 'bot') {
+      addSec('Сложность бота');
+      subRow([['easy', 'Лёгкий'], ['mid', 'Средний'], ['hard', 'Сильный']], duelBotLvl, function (v) { duelBotLvl = v; renderDuel(); }, 'Сложность бота');
+      var go = el('button', 'go', 'Играть с ботом');
+      go.type = 'button'; go.id = 'duelBotGo'; go.style.marginTop = '18px';
+      go.addEventListener('click', function () { startDuel({ type: duelType, kind: 'bot', bot: duelBotLvl }); });
+      sheetBody.appendChild(go);
+      addNote(duelType === 'tower' ? 'Бот строит свою башню рядом с твоей. Чем сильнее бот, тем чаще он попадает идеально и тем реже падает.' : 'Бот печатает слово с задержкой: лёгкий медленно, сильный почти как опытный игрок.');
+      return;
+    }
+    onlineUi();
+    if (onl.step) return;
+    addSec('Без сервера, по кодам');
+    lanUi();
+  }
+
+  /* ================= online quick match via Supabase Realtime (Phoenix channels) ================= */
+  var RT = { ws: null, ref: 1, chans: {}, hb: 0, open: false, queue: [] };
+  var onl = { lobby: null, timer: 0, matched: false, state: '', err: '' };
+  function rtUrl() { return SB_URL.replace(/\/$/, '').replace(/^http/, 'ws') + '/realtime/v1/websocket?apikey=' + encodeURIComponent(SB_KEY) + '&vsn=1.0.0'; }
+  function rtSend(o) {
+    var s = JSON.stringify(o);
+    if (RT.ws && RT.ws.readyState === 1) RT.ws.send(s); else RT.queue.push(s);
+  }
+  function rtEnsure() {
+    if (RT.ws && (RT.ws.readyState === 0 || RT.ws.readyState === 1)) return;
+    RT.open = false;
+    var ws = new WebSocket(rtUrl()); RT.ws = ws;
+    ws.onopen = function () {
+      RT.open = true;
+      RT.queue.splice(0).forEach(function (s) { ws.send(s); });
+      clearInterval(RT.hb);
+      RT.hb = setInterval(function () { if (ws.readyState === 1) ws.send(JSON.stringify({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: String(RT.ref++) })); }, 25000);
+    };
+    ws.onmessage = function (ev) {
+      var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      var ch = RT.chans[m.topic];
+      if (ch) ch.onMsg(m);
+    };
+    ws.onclose = function () {
+      clearInterval(RT.hb); RT.open = false;
+      Object.keys(RT.chans).forEach(function (k) { RT.chans[k].onMsg({ event: 'phx_close', payload: {} }); });
+    };
+  }
+  function rtChannel(name, meta) {
+    rtEnsure();
+    var topic = 'realtime:' + name, hs = {}, peerCbs = [], present = {}, joined = false, joinCbs = [];
+    var ch = {
+      name: name, topic: topic,
+      present: function () { return present; },
+      onJoin: function (f) { if (joined) f(); else joinCbs.push(f); },
+      emit: function (t, d) { rtSend({ topic: topic, event: 'broadcast', payload: { type: 'broadcast', event: t, payload: { d: d, n: myName(), c: clientId } }, ref: String(RT.ref++) }); return Promise.resolve(); },
+      on: function (t, f) { (hs[t] = hs[t] || []).push(f); return function () { hs[t] = (hs[t] || []).filter(function (x) { return x !== f; }); }; },
+      onPeers: function (f) { peerCbs.push(f); return function () { peerCbs = peerCbs.filter(function (x) { return x !== f; }); }; },
+      onPresence: null,
+      leave: function () { try { rtSend({ topic: topic, event: 'phx_leave', payload: {}, ref: String(RT.ref++) }); } catch (e) {} delete RT.chans[topic]; return Promise.resolve(); },
+      onMsg: function (m) {
+        if (m.event === 'phx_reply' && m.payload && m.payload.status === 'ok' && !joined) {
+          joined = true;
+          rtSend({ topic: topic, event: 'presence', payload: { type: 'presence', event: 'track', payload: meta || {} }, ref: String(RT.ref++) });
+          joinCbs.splice(0).forEach(function (f) { f(); });
+        } else if (m.event === 'broadcast' && m.payload && m.payload.event) {
+          var w = m.payload.payload || {};
+          if (w.c === clientId) return;
+          var msg = { topic: m.payload.event, data: w.d, isMe: false, sameTab: false, peer: 'rt-peer', by: 'name:' + String(w.n || 'Соперник').slice(0, 16), kind: 'viewer', guest: false };
+          (hs[m.payload.event] || []).slice().forEach(function (f) { try { f(msg); } catch (e) {} });
+        } else if (m.event === 'presence_state') {
+          present = {}; Object.keys(m.payload || {}).forEach(function (k) { var mt = (m.payload[k].metas || [])[0]; if (mt) present[k] = mt; });
+          if (ch.onPresence) ch.onPresence(present);
+        } else if (m.event === 'presence_diff') {
+          var p = m.payload || {}, left = [];
+          Object.keys(p.leaves || {}).forEach(function (k) { delete present[k]; if (k !== clientId) left.push({ peer: 'rt-peer' }); });
+          Object.keys(p.joins || {}).forEach(function (k) { var mt = (p.joins[k].metas || [])[0]; if (mt) present[k] = mt; });
+          if (left.length) peerCbs.slice().forEach(function (f) { try { f({ left: left, joined: [], updated: [], peers: [] }); } catch (e) {} });
+          if (ch.onPresence) ch.onPresence(present);
+        } else if (m.event === 'phx_close' || m.event === 'phx_error') {
+          if (joined) peerCbs.slice().forEach(function (f) { try { f({ left: [{ peer: 'rt-peer' }], joined: [], updated: [], peers: [] }); } catch (e) {} });
+        }
+      }
+    };
+    RT.chans[topic] = ch;
+    rtSend({ topic: topic, event: 'phx_join', payload: { config: { broadcast: { ack: false, self: false }, presence: { key: clientId }, postgres_changes: [], private: false } }, ref: String(RT.ref++) });
+    return ch;
+  }
+  function onlClose() {
+    clearTimeout(onl.timer); onl.timer = 0;
+    if (onl.lobby) { onl.lobby.leave(); onl.lobby = null; }
+    onl.state = ''; onl.matched = false;
+  }
+  var _netLeave2 = netLeave;
+  netLeave = function () {
+    _netLeave2(); onlClose();
+    Object.keys(RT.chans).forEach(function (k) { if (RT.chans[k].name.indexOf('stopka-m-') === 0) RT.chans[k].leave(); });
+  };
+  function onlFind(type) {
+    netLeave(); onl.err = ''; onl.state = 'search'; onl.matched = false;
+    var lobby = rtChannel('stopka-lobby-' + type, { id: clientId, t: Date.now(), name: myName() });
+    onl.lobby = lobby;
+    function check(list) {
+      if (onl.matched || !list[clientId]) return;
+      var ids = Object.keys(list).sort(function (a, b) { return list[a].t - list[b].t || (a < b ? -1 : 1); });
+      var i = ids.indexOf(clientId);
+      if (i % 2 === 0 && ids[i + 1]) {
+        onl.matched = true;
+        var room = 'stopka-m-' + clientId.slice(0, 8) + '-' + Date.now().toString(36);
+        lobby.emit('pair', { host: clientId, guest: ids[i + 1], room: room });
+        enter(room, true);
+      }
+    }
+    function enter(room, host) {
+      onl.matched = true;
+      var rc = rtChannel(room, { id: clientId });
+      lobby.leave(); onl.lobby = null; clearTimeout(onl.timer);
+      onl.state = 'joined';
+      netAttach(rc, room, host, type);
+      if (!host) rc.onJoin(function () { setTimeout(function () { netEmit('hello', {}); }, 400); });
+      renderDuel();
+    }
+    lobby.onPresence = check;
+    lobby.on('pair', function (m) { if (!onl.matched && m.data && m.data.guest === clientId && typeof m.data.room === 'string') enter(m.data.room, false); });
+    onl.timer = setTimeout(function () { if (!onl.matched) { onl.err = 'Соперник не найден. Попробуй ещё раз или позови друга.'; onlClose(); renderDuel(); } }, 60000);
+    renderDuel();
+  }
+
+  /* ================= duel with a friend over the internet: Supabase Realtime broadcast, room code ================= */
+  var onl = { ws: null, code: '', step: '', err: '', hb: 0, wd: 0, ping: 0, seen: 0, ref: 1 };
+  function onlClose() {
+    clearInterval(onl.hb); clearInterval(onl.wd); clearInterval(onl.ping);
+    onl.hb = onl.wd = onl.ping = 0;
+    var w = onl.ws; onl.ws = null;
+    if (w) { w.onclose = null; w.onmessage = null; try { w.close(); } catch (e) {} }
+    onl.step = ''; onl.code = ''; onl.seen = 0;
+  }
+  var _lanLeave = netLeave;
+  netLeave = function () { _lanLeave(); onlClose(); };
+  function onlCode() {
+    var a = '0123456789', s = '';
+    for (var i = 0; i < 4; i++) s += a.charAt(Math.floor(Math.random() * a.length));
+    return s;
+  }
+  function onlFail(msg) { onlClose(); onl.err = msg; renderDuel(); }
+  function onlConnect(code, host, type) {
+    var url = String(SB_URL || '').replace(/\/+$/, ''), key = String(SB_KEY || '');
+    if (!url || !key) { onl.err = 'Сначала подключи Supabase во вкладке «Лидеры».'; renderDuel(); return; }
+    code = String(code || '').replace(/[^0-9]/g, '');
+    if (code.length !== 4) { onl.err = 'Код комнаты состоит из четырёх цифр.'; renderDuel(); return; }
+    netLeave(); onl.err = ''; onl.step = 'busy'; onl.code = code; renderDuel();
+    var ws;
+    try { ws = new WebSocket(url.replace(/^http/, 'ws') + '/realtime/v1/websocket?apikey=' + encodeURIComponent(key) + '&vsn=1.0.0'); }
+    catch (e) { onlFail('Не удалось открыть соединение. Проверь адрес Supabase.'); return; }
+    onl.ws = ws;
+    var topic = 'realtime:stopka-duel-' + code, hs = {}, peerCbs = [], joined = false, gone = false;
+    function send(o) { try { if (ws.readyState === 1) ws.send(JSON.stringify(o)); } catch (e) {} }
+    function goneNow() {
+      if (gone || !joined) return; gone = true;
+      peerCbs.slice().forEach(function (f) { try { f({ left: [{ peer: 'ws-peer' }], joined: [], updated: [], peers: [] }); } catch (e) {} });
+    }
+    var room = {
+      name: 'online',
+      emit: function (t, d) { send({ topic: topic, event: 'broadcast', payload: { type: 'broadcast', event: 'g', payload: { t: t, d: d, n: myName() } }, ref: String(++onl.ref) }); return Promise.resolve(); },
+      on: function (t, f) { (hs[t] = hs[t] || []).push(f); return function () { hs[t] = (hs[t] || []).filter(function (x) { return x !== f; }); }; },
+      onPeers: function (f) { peerCbs.push(f); return function () { peerCbs = peerCbs.filter(function (x) { return x !== f; }); }; },
+      leave: function () { onlClose(); return Promise.resolve(); }
+    };
+    ws.onopen = function () {
+      send({ topic: topic, event: 'phx_join', payload: { config: { broadcast: { ack: false, self: false }, presence: { key: '' }, postgres_changes: [] } }, ref: '1', join_ref: '1' });
+      onl.hb = setInterval(function () { send({ topic: 'phoenix', event: 'heartbeat', payload: {}, ref: String(++onl.ref) }); }, 25000);
+    };
+    ws.onmessage = function (ev) {
+      var m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (!m) return;
+      if (m.event === 'phx_reply' && m.topic === topic && !joined) {
+        if (m.payload && m.payload.status === 'ok') {
+          joined = true; onl.step = host ? 'wait' : '';
+          netAttach(room, code, host, type);
+          onl.ping = setInterval(function () { room.emit('ping', {}); }, 2000);
+          onl.wd = setInterval(function () { if (onl.seen && Date.now() - onl.seen > 9000) goneNow(); }, 3000);
+          if (!host) { room.emit('hello', {}); onl.step = 'busy'; }
+          renderDuel();
+        } else onlFail('Не удалось войти в комнату. В Supabase включи Realtime и публичный доступ к каналам (Realtime, Settings).');
+        return;
+      }
+      if (m.event === 'phx_error' || m.event === 'phx_close') { if (!joined) onlFail('Сервер отклонил соединение.'); return; }
+      if (m.event !== 'broadcast' || !m.payload || m.payload.event !== 'g' || !m.payload.payload) return;
+      var b = m.payload.payload;
+      if (!b || typeof b.t !== 'string') return;
+      onl.seen = Date.now();
+      if (b.t === 'ping') return;
+      var msg = { topic: b.t, data: b.d, isMe: false, sameTab: false, peer: 'ws-peer', by: 'name:' + String(b.n || 'Соперник').slice(0, 16), kind: 'viewer', guest: false };
+      (hs[b.t] || []).slice().forEach(function (f) { try { f(msg); } catch (e) {} });
+    };
+    ws.onclose = function () {
+      if (!joined) { onlFail('Не удалось подключиться. Проверь интернет и ключи Supabase.'); return; }
+      goneNow();
+    };
+    ws.onerror = function () {};
+  }
+  function onlineUi() {
+    addSec('По интернету');
+    if (!String(SB_URL || '') || !String(SB_KEY || '')) { addNote('Нужен Supabase: открой вкладку «Лидеры» и подключи адрес и ключ. Тогда играть можно по короткому коду комнаты.'); return; }
+    if (onl.err) addNote(onl.err);
+    if (onl.step === 'busy') { addNote('Подключаюсь…'); return; }
+    var cancel = function () { var c = el('button', 'go small ghost', 'Отменить'); c.type = 'button'; c.style.marginTop = '14px'; c.addEventListener('click', function () { netLeave(); renderDuel(); }); return c; };
+    if (onl.step === 'wait') {
+      var big = el('div', '', onl.code);
+      big.id = 'onlShow'; big.style.cssText = 'font:800 44px/1.1 var(--font-display);letter-spacing:0.18em;margin:12px 0 4px;color:var(--peach)';
+      sheetBody.appendChild(big);
+      addNote('Скажи этот код другу. Как только он войдёт, игра начнётся сама.');
+      var inv = el('button', 'go small', 'Отправить ссылку другу'); inv.type = 'button'; inv.id = 'onlInvite'; inv.style.marginTop = '12px';
+      inv.addEventListener('click', function () {
+        var link = location.href.split('#')[0].split('?')[0] + '?room=' + onl.code, txt = 'Сыграем в Стопку? Код комнаты ' + onl.code + ': ' + link;
+        try {
+          if (navigator.share) { navigator.share({ title: 'Стопка', text: txt }).catch(function () {}); return; }
+          navigator.clipboard.writeText(txt).then(function () { toast('Ссылка скопирована'); });
+        } catch (e) { toast(txt, 5000); }
+      });
+      sheetBody.appendChild(inv);
+      sheetBody.appendChild(cancel());
+      return;
+    }
+    var cr = el('button', 'go small', 'Создать комнату'); cr.type = 'button'; cr.id = 'onlCreate';
+    cr.addEventListener('click', function () { onlConnect(onlCode(), true, duelType); });
+    sheetBody.appendChild(cr);
+    var row = el('div', 'row'); row.style.marginTop = '14px';
+    var inp = document.createElement('input');
+    inp.id = 'onlCodeIn'; inp.className = 'field'; inp.maxLength = 4; inp.placeholder = '0000'; inp.autocomplete = 'off'; inp.inputMode = 'numeric'; inp.pattern = '[0-9]*'; inp.spellcheck = false;
+    inp.addEventListener('input', function () { inp.value = inp.value.replace(/[^0-9]/g, '').slice(0, 4); });
+    var jn = el('button', 'go small', 'Войти'); jn.type = 'button'; jn.id = 'onlJoin';
+    jn.addEventListener('click', function () { onlConnect(inp.value, false, 'tower'); });
+    row.appendChild(inp); row.appendChild(jn); sheetBody.appendChild(row);
+    addNote('Вид дуэли выбирает тот, кто создаёт комнату, у друга он подставится сам.');
+  }
+  (function () {
+    var m = /[?&]room=(\d{4})/.exec(location.search);
+    if (!m) return;
+    setTimeout(function () { duelOpp = 'human'; openSheet('duel'); onlConnect(m[1], false, 'tower'); }, 800);
+  })();
+
+})();
+</script>
+</body>
+</html>
